@@ -1,4 +1,10 @@
 from abc import ABC, abstractmethod
+import svgelements
+#TODO: use dataclasses
+
+# plot settings
+fileIn = "testDrawing.svg" # hardcoded to speed up testing
+# will ask user later
 
 # wrapper for different types of path segments
 class Segment(ABC):
@@ -17,50 +23,50 @@ class Segment(ABC):
     @abstractmethod
     def reverse(self):
         """Reverse the segment direction"""
-    
+
     @abstractmethod
     def bounds(self) -> tuple[int, int, int, int]:
         """Return (xmin, ymin, xmax, ymax)"""
-    
+
     @abstractmethod
     def __repr__(self):
-        return super().__repr__()
+        pass
 
 class Line(Segment):
     def __init__(self, start: complex = 0, end: complex = 0):
         self.start = start
         self.end = end
-    
+
     def length(self) -> float: #TODO
         return 0
-    
+
     def point(self, t: float) -> complex: #TODO
         return 0
-    
+
     def transform(self, matrix: list[int]): #TODO
         pass
-    
+
     def reverse(self): #TODO
         pass
 
     def bounds(self) -> tuple[int, int, int, int]: #TODO
         return (0, 0, 0, 0)
-    
+
     def __repr__(self):
         return f"Line(start={self.start}, end={self.end})"
 
 class Arc:
     #TODO: storage
-    
+
     def length(self) -> float: #TODO
         return 0
-    
+
     def point(self, t: float) -> complex: #TODO
         return 0
-    
+
     def transform(self, matrix: list[int]): #TODO
         pass
-    
+
     def reverse(self): #TODO
         pass
 
@@ -68,19 +74,20 @@ class Arc:
         return (0, 0, 0, 0)
 
 class QuadraticBezier:
-    start: complex = 0
-    p1: complex = 0
-    end: complex = 0
-    
+    def __init__(self, start: complex = 0, p1: complex = 0, end: complex = 0):
+        self.start = start
+        self.p1 = p1
+        self.end = end
+
     def length(self) -> float: #TODO
         return 0
-    
+
     def point(self, t: float) -> complex: #TODO
         return 0
-    
+
     def transform(self, matrix: list[int]): #TODO
         pass
-    
+
     def reverse(self): #TODO
         pass
 
@@ -88,20 +95,21 @@ class QuadraticBezier:
         return (0, 0, 0, 0)
 
 class CubicBezier:
-    start: complex = 0
-    p1: complex = 0
-    p2: complex = 0
-    end: complex = 0
-    
+    def __init__(self, start: complex = 0, p1: complex = 0, p2: complex = 0, end: complex = 0):
+        self.start = start
+        self.p1 = p1
+        self.p2 = p2
+        self.end = end
+
     def length(self) -> float: #TODO
         return 0
-    
+
     def point(self, t: float) -> complex: #TODO
         return 0
-    
+
     def transform(self, matrix: list[int]): #TODO
         pass
-    
+
     def reverse(self): #TODO
         pass
 
@@ -110,19 +118,20 @@ class CubicBezier:
 
 # stores a list of segments
 class Path:
-    segments: list[Segment] = []
+    def __init__(self):
+        self.segments: list[Segment] = []
 
     def transform(self, matrix: list[int]): #TODO
         pass
 
     def length(self) -> float: #TODO
-        pass
+        return 0
 
     def reverse(self): #TODO
         pass
 
     def bounds(self) -> tuple[int, int, int, int]: #TODO
-        pass
+        return (0, 0, 0, 0)
 
     def tessellate(self): #TODO
         pass
@@ -132,29 +141,30 @@ class Path:
 
 # stores an object style (line width, color, fill, etc.)
 class Style:
-    strokeWidth: float = 1
-    strokeColor: int = [0, 0, 0]
-    fillColor: float = [0, 0, 0]
+    def __init__(self, strokeWidth: float = 1, strokeColor: list[int] = [0, 0, 0], fillColor: list[int] = [0, 0, 0]):
+        self.strokeWidth = strokeWidth
+        self.strokeColor = strokeColor
+        self.fillColor = fillColor
 
     def __repr__(self):
         return f"Style(strokeWidth={self.strokeWidth}, strokeColor={self.strokeColor!r}, fillColor={self.fillColor!r})"
 
 # stores an affine transformation (rotation, scaling, shear, transform)
-class Transform: #TODO
-    matrix = [1, 0, 0, 1, 0, 0] #TODO: find valid starting condition
-    
+class Transform: #TODO: add rotate, translate, etc. functions
+    def __init__(self, matrix: list[int] = [1, 0, 0, 1, 0, 0]):
+        self.matrix = matrix
+
     def __repr__(self):
         return f"Transform(matrix={self.matrix!r})"
 
 # stores a path, style, and transform
 class PathObject:
-    geometry = Path()
-    style = Style()
-    transform = Transform()
-
     def __init__(self, id: str):
         self.id = id
-    
+        self.geometry = Path()
+        self.style = Style()
+        self.transform = Transform()
+
     def __repr__(self):
         return f"PathObject(id={self.id!r}, geometry={self.geometry}, style={self.style}, transform={self.transform})"
 
@@ -164,10 +174,11 @@ class PathObject:
 
 # overall document
 class Document:
-    objects: list[PathObject] = []
-    id: dict[str: PathObject] = {}
+    def __init__(self):
+        self.objects: list[PathObject] = []
+        self.id: dict[str, PathObject] = {}
 
-    def add(self, obj: Segment):
+    def add(self, obj: PathObject): #FIXME: adding an object with id that already exists will break the relation between objects and id
         self.objects.append(obj)
         if obj.id is not None:
             self.id[obj.id] = obj
@@ -175,9 +186,38 @@ class Document:
     def __repr__(self):
         return f"Document(id={self.id!r})"
 
-document = Document()
+def readStyle(element: svgelements.SVGElement) -> Style:
+    return Style(
+        strokeWidth=getattr(element, "stroke_width", 1),
+        #TODO: implement color conversion (hex -> rgb)
+        #strokeColor=getattr(element, "stroke", [0, 0, 0]),
+        #fillColor=getattr(element, "fill", [0, 0, 0])
+    )
 
-document.add(PathObject("Test"))
-document.id["Test"] += Line(3+5j, 100+100j)
+def parseSvg(svgPath: str):
+    svg = svgelements.SVG.parse(svgPath)
+    for element in svg.elements():
+        match type(element):
+            case svgelements.Rect:
+                builder = PathObject(element.id)
+                builder.style = readStyle(element)
+                builder.transform.matrix = getattr(element, "matrix", [1, 0, 0, 1, 0, 0])
+
+                xmin = element.x
+                xmax = element.x + element.width
+                ymin = element.y * 1j
+                ymax = (element.y + element.height) * 1j
+                builder += Line(xmin+ymin, xmin+ymax)
+                builder += Line(xmin+ymax, xmax+ymax)
+                builder += Line(xmax+ymax, xmax+ymin)
+                builder += Line(xmax+ymin, xmin+ymin)
+                document.add(builder)
+            case svgelements.SVG | svgelements.SVGElement:
+                pass # these element types can be safely ignored because they are not geometry
+            case _:
+                print(f"Ignored {type(element)} with name {element.id}")
+
+document = Document()
+parseSvg(fileIn)
 
 print(document)
