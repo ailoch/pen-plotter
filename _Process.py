@@ -167,17 +167,23 @@ class Path:
     def __repr__(self):
         return f"Path(segments={self.segments!r})"
 
-    def transform(self, matrix: list[int]): #TODO
-        pass
+    def length(self) -> float:
+        len = 0
+        for segment in self.segments:
+            len += segment.length()
+        return len
 
-    def length(self) -> float: #TODO
-        return 0
+    def reverse(self):
+        self.segments.reverse()
+        for segment in self.segments:
+            segment.reverse()
 
-    def reverse(self): #TODO
-        pass
-
-    def bounds(self) -> tuple[float, float, float, float]: #TODO
-        return (0, 0, 0, 0)
+    def bounds(self) -> tuple[float, float, float, float]:
+        bounds = (math.inf, math.inf, -math.inf, -math.inf)
+        for segment in self.segments:
+            segmentBounds = segment.bounds()
+            bounds = (min(bounds[0], segmentBounds[0]), min(bounds[1], segmentBounds[1]), max(bounds[2], segmentBounds[2]), max(bounds[3], segmentBounds[3]))
+        return bounds
 
     def tessellate(self): #TODO
         pass
