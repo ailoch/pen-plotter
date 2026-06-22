@@ -1,3 +1,4 @@
+import math
 from abc import ABC, abstractmethod
 import svgelements
 #TODO: use dataclasses
@@ -5,6 +6,32 @@ import svgelements
 # plot settings
 fileIn = "testDrawing.svg" # hardcoded to speed up testing
 # will ask user later
+
+# stores an object style (line width, color, fill)
+class Style:
+    def __init__(self, strokeWidth: float = 1, strokeColor: list[int] = [0, 0, 0], fillColor: list[int] = [0, 0, 0]):
+        self.strokeWidth = strokeWidth
+        self.strokeColor = strokeColor
+        self.fillColor = fillColor
+
+    def __repr__(self):
+        return f"Style(strokeWidth={self.strokeWidth}, strokeColor={self.strokeColor!r}, fillColor={self.fillColor!r})"
+
+# stores an affine transformation (rotation, scaling, shear, transform)
+class Transform: #TODO: add rotate, translate, etc. functions
+    def __init__(self, matrix: list[int] = [1, 0, 0, 1, 0, 0]):
+        self.matrix = matrix
+
+    def __repr__(self):
+        return f"Transform(matrix={self.matrix!r})"
+
+    def apply(self, p: complex):
+        x, y = p.real, p.imag
+
+        return complex(
+            self.matrix[0]*x + self.matrix[2]*y + self.matrix[4],
+            self.matrix[1]*x + self.matrix[3]*y + self.matrix[5]    
+        )
 
 # wrapper for different types of path segments
 class Segment(ABC):
@@ -17,7 +44,7 @@ class Segment(ABC):
         """Return the point at t"""
 
     @abstractmethod
-    def transform(self, matrix: list[int]):
+    def transform(self, t: Transform):
         """Apply an affine transformation"""
 
     @abstractmethod
@@ -25,7 +52,7 @@ class Segment(ABC):
         """Reverse the segment direction"""
 
     @abstractmethod
-    def bounds(self) -> tuple[int, int, int, int]:
+    def bounds(self) -> tuple[float, float, float, float]:
         """Return (xmin, ymin, xmax, ymax)"""
 
     @abstractmethod
@@ -37,20 +64,26 @@ class Line(Segment):
         self.start = start
         self.end = end
 
-    def length(self) -> float: #TODO
-        return 0
+    def length(self) -> float:
+        d = self.start - self.end
+        return math.sqrt(d.real**2 + d.imag**2)
 
-    def point(self, t: float) -> complex: #TODO
-        return 0
+    def point(self, t: float) -> complex:
+        return t * (self.end-self.start) + self.start
 
-    def transform(self, matrix: list[int]): #TODO
-        pass
+    def transform(self, t: Transform):
+        self.start = t.apply(self.start)
+        self.end = t.apply(self.end)
 
-    def reverse(self): #TODO
-        pass
+    def reverse(self):
+        self.end, self.start = self.start, self.end
 
-    def bounds(self) -> tuple[int, int, int, int]: #TODO
-        return (0, 0, 0, 0)
+    def bounds(self) -> tuple[float, float, float, float]:
+        xmin = min(self.start.real, self.end.real)
+        xmax = max(self.start.real, self.end.real)
+        ymin = min(self.start.imag, self.end.imag)
+        ymax = max(self.start.imag, self.end.imag)
+        return (xmin, ymin, xmax, ymax)
 
     def __repr__(self):
         return f"Line(start={self.start}, end={self.end})"
@@ -64,13 +97,13 @@ class Arc:
     def point(self, t: float) -> complex: #TODO
         return 0
 
-    def transform(self, matrix: list[int]): #TODO
+    def transform(self, t: Transform): #TODO
         pass
 
     def reverse(self): #TODO
         pass
 
-    def bounds(self) -> tuple[int, int, int, int]: #TODO
+    def bounds(self) -> tuple[float, float, float, float]: #TODO
         return (0, 0, 0, 0)
 
 class QuadraticBezier:
@@ -85,13 +118,13 @@ class QuadraticBezier:
     def point(self, t: float) -> complex: #TODO
         return 0
 
-    def transform(self, matrix: list[int]): #TODO
+    def transform(self, t: Transform): #TODO
         pass
 
     def reverse(self): #TODO
         pass
 
-    def bounds(self) -> tuple[int, int, int, int]: #TODO
+    def bounds(self) -> tuple[float, float, float, float]: #TODO
         return (0, 0, 0, 0)
 
 class CubicBezier:
@@ -107,13 +140,13 @@ class CubicBezier:
     def point(self, t: float) -> complex: #TODO
         return 0
 
-    def transform(self, matrix: list[int]): #TODO
+    def transform(self, t: Transform): #TODO
         pass
 
     def reverse(self): #TODO
         pass
 
-    def bounds(self) -> tuple[int, int, int, int]: #TODO
+    def bounds(self) -> tuple[float, float, float, float]: #TODO
         return (0, 0, 0, 0)
 
 # stores a list of segments
@@ -138,24 +171,6 @@ class Path:
 
     def __repr__(self):
         return f"Path(segments={self.segments!r})"
-
-# stores an object style (line width, color, fill, etc.)
-class Style:
-    def __init__(self, strokeWidth: float = 1, strokeColor: list[int] = [0, 0, 0], fillColor: list[int] = [0, 0, 0]):
-        self.strokeWidth = strokeWidth
-        self.strokeColor = strokeColor
-        self.fillColor = fillColor
-
-    def __repr__(self):
-        return f"Style(strokeWidth={self.strokeWidth}, strokeColor={self.strokeColor!r}, fillColor={self.fillColor!r})"
-
-# stores an affine transformation (rotation, scaling, shear, transform)
-class Transform: #TODO: add rotate, translate, etc. functions
-    def __init__(self, matrix: list[int] = [1, 0, 0, 1, 0, 0]):
-        self.matrix = matrix
-
-    def __repr__(self):
-        return f"Transform(matrix={self.matrix!r})"
 
 # stores a path, style, and transform
 class PathObject:
@@ -201,7 +216,7 @@ def parseSvg(svgPath: str):
             case svgelements.Rect:
                 builder = PathObject(element.id)
                 builder.style = readStyle(element)
-                builder.transform.matrix = getattr(element, "matrix", [1, 0, 0, 1, 0, 0])
+                builder.transform.matrix = getattr(element, "matrix", [1, 0, 0, 1, 0, 0]) #FIXME: matrix isn't being read properly
 
                 xmin = element.x
                 xmax = element.x + element.width
