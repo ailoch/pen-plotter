@@ -19,22 +19,36 @@ class Style:
 
 # stores an affine transformation (rotation, scaling, shear, transform)
 class Transform: #TODO: add rotate, translate, etc. functions
-    def __init__(self, matrix: list[int] = [1, 0, 0, 1, 0, 0]):
+    def __init__(self, matrix: list[float] = [1, 0, 0, 1, 0, 0]):
         self.matrix = matrix
 
     def __repr__(self):
         return f"Transform(matrix={self.matrix!r})"
+
+    def __imatmul__(self, other: list[float]):
+        return Transform([
+            self.matrix[0]*other[0] + self.matrix[2]*other[1],
+            self.matrix[1]*other[0] + self.matrix[3]*other[1],
+            self.matrix[0]*other[2] + self.matrix[2]*other[3],
+            self.matrix[1]*other[2] + self.matrix[3]*other[3],
+            self.matrix[0]*other[4] + self.matrix[2]*other[5] + self.matrix[4],
+            self.matrix[1]*other[4] + self.matrix[3]*other[5] + self.matrix[5]
+        ])
 
     def apply(self, p: complex):
         x, y = p.real, p.imag
 
         return complex(
             self.matrix[0]*x + self.matrix[2]*y + self.matrix[4],
-            self.matrix[1]*x + self.matrix[3]*y + self.matrix[5]    
+            self.matrix[1]*x + self.matrix[3]*y + self.matrix[5]
         )
 
 # wrapper for different types of path segments
 class Segment(ABC):
+    @abstractmethod
+    def __repr__(self):
+        pass
+
     @abstractmethod
     def length(self) -> float:
         """Return the arc length"""
@@ -44,7 +58,7 @@ class Segment(ABC):
         """Return the point at t"""
 
     @abstractmethod
-    def transform(self, t: Transform):
+    def applyTransform(self, t: Transform):
         """Apply an affine transformation"""
 
     @abstractmethod
@@ -55,14 +69,13 @@ class Segment(ABC):
     def bounds(self) -> tuple[float, float, float, float]:
         """Return (xmin, ymin, xmax, ymax)"""
 
-    @abstractmethod
-    def __repr__(self):
-        pass
-
 class Line(Segment):
     def __init__(self, start: complex = 0, end: complex = 0):
         self.start = start
         self.end = end
+
+    def __repr__(self):
+        return f"Line(start={self.start}, end={self.end})"
 
     def length(self) -> float:
         d = self.start - self.end
@@ -71,7 +84,7 @@ class Line(Segment):
     def point(self, t: float) -> complex:
         return t * (self.end-self.start) + self.start
 
-    def transform(self, t: Transform):
+    def applyTransform(self, t: Transform):
         self.start = t.apply(self.start)
         self.end = t.apply(self.end)
 
@@ -85,9 +98,6 @@ class Line(Segment):
         ymax = max(self.start.imag, self.end.imag)
         return (xmin, ymin, xmax, ymax)
 
-    def __repr__(self):
-        return f"Line(start={self.start}, end={self.end})"
-
 class Arc:
     #TODO: storage
 
@@ -97,7 +107,7 @@ class Arc:
     def point(self, t: float) -> complex: #TODO
         return 0
 
-    def transform(self, t: Transform): #TODO
+    def applyTransform(self, t: Transform): #TODO
         pass
 
     def reverse(self): #TODO
@@ -118,7 +128,7 @@ class QuadraticBezier:
     def point(self, t: float) -> complex: #TODO
         return 0
 
-    def transform(self, t: Transform): #TODO
+    def applyTransform(self, t: Transform): #TODO
         pass
 
     def reverse(self): #TODO
@@ -140,7 +150,7 @@ class CubicBezier:
     def point(self, t: float) -> complex: #TODO
         return 0
 
-    def transform(self, t: Transform): #TODO
+    def applyTransform(self, t: Transform): #TODO
         pass
 
     def reverse(self): #TODO
@@ -154,6 +164,9 @@ class Path:
     def __init__(self):
         self.segments: list[Segment] = []
 
+    def __repr__(self):
+        return f"Path(segments={self.segments!r})"
+
     def transform(self, matrix: list[int]): #TODO
         pass
 
@@ -163,14 +176,11 @@ class Path:
     def reverse(self): #TODO
         pass
 
-    def bounds(self) -> tuple[int, int, int, int]: #TODO
+    def bounds(self) -> tuple[float, float, float, float]: #TODO
         return (0, 0, 0, 0)
 
     def tessellate(self): #TODO
         pass
-
-    def __repr__(self):
-        return f"Path(segments={self.segments!r})"
 
 # stores a path, style, and transform
 class PathObject:
@@ -186,6 +196,11 @@ class PathObject:
     def __iadd__(self, segment):
         self.geometry.segments.append(segment)
         return self
+
+    def applyTransformations(self):
+        for segment in self.geometry.segments:
+            segment.applyTransform(self.transform)
+        self.transform = Transform() # reset transformation
 
 # overall document
 class Document:
@@ -210,13 +225,14 @@ def readStyle(element: svgelements.SVGElement) -> Style:
     )
 
 def parseSvg(svgPath: str):
+    document = Document()
     svg = svgelements.SVG.parse(svgPath)
     for element in svg.elements():
         match type(element):
             case svgelements.Rect:
                 builder = PathObject(element.id)
                 builder.style = readStyle(element)
-                builder.transform.matrix = getattr(element, "matrix", [1, 0, 0, 1, 0, 0]) #FIXME: matrix isn't being read properly
+                builder.transform @= getattr(element, "transform", [1, 0, 0, 1, 0, 0])
 
                 xmin = element.x
                 xmax = element.x + element.width
@@ -231,8 +247,10 @@ def parseSvg(svgPath: str):
                 pass # these element types can be safely ignored because they are not geometry
             case _:
                 print(f"Ignored {type(element)} with name {element.id}")
+    for path in document.objects:
+        path.applyTransformations()
+    return document
 
-document = Document()
-parseSvg(fileIn)
+document = parseSvg(fileIn)
 
 print(document)

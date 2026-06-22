@@ -78,13 +78,13 @@
        style="fill:#000000;stroke-width:0.256169"
        id="path1"
        cx="167.5"
-       cy="87.499992"
+       cy="87.5"
        r="17.5" />
     <ellipse
        style="fill:#000000;stroke-width:0.269448"
        id="path2"
        cx="105"
-       cy="109.99999"
+       cy="110"
        rx="15"
        ry="25" />
     <ellipse
@@ -113,10 +113,10 @@
     <rect
        style="fill:#000000;fill-opacity:1;stroke:#000000;stroke-width:0.277383;stroke-dasharray:none;stroke-dashoffset:0;stroke-opacity:1"
        id="rect14"
-       width="21.803493"
-       height="36.512825"
-       x="66.24411"
-       y="129.49007"
+       width="20"
+       height="35"
+       x="65"
+       y="130"
        transform="matrix(0.980483,-0.19660388,0.45826642,0.88881488,0,0)" />
   </g>
 </svg>
