@@ -1,11 +1,28 @@
 import math
 from abc import ABC, abstractmethod
+from enum import Enum, auto
+from typing import TextIO
 import svgelements
 #TODO: use dataclasses
 
+class States(Enum):
+    DRAW = auto()
+    TRAVEL = auto()
+
 # plot settings
-fileIn = "testDrawing.svg" # hardcoded to speed up testing
-# will ask user later
+fileIn = "testDrawing.svg" # hardcoded to speed up testing, need to ask user later
+fileOut = "testDrawing.gcode"
+prefixFile = "ーstartCode.gcode"
+suffixFile = "ーendCode.gcode"
+
+penHeights = {States.DRAW: 1, States.TRAVEL: 5} # pen heights in mm
+penWidth = .7 # pen width in mm (only used for display)
+
+shortTravelThreshold = .7 # travels below this distance will not lift the pen
+penPos: list[float] = [128, 128, 10] # initial pen position
+drawableArea = (215.9, 230) #TODO: implement bounds checking
+
+#region shapeDefs
 
 # stores an object style (line width, color, fill)
 class Style:
@@ -98,7 +115,7 @@ class Line(Segment):
         ymax = max(self.start.imag, self.end.imag)
         return (xmin, ymin, xmax, ymax)
 
-class Arc:
+class Arc(Segment):
     #TODO: storage
 
     def length(self) -> float: #TODO
@@ -116,7 +133,7 @@ class Arc:
     def bounds(self) -> tuple[float, float, float, float]: #TODO
         return (0, 0, 0, 0)
 
-class QuadraticBezier:
+class QuadraticBezier(Segment):
     def __init__(self, start: complex = 0, p1: complex = 0, end: complex = 0):
         self.start = start
         self.p1 = p1
@@ -137,7 +154,7 @@ class QuadraticBezier:
     def bounds(self) -> tuple[float, float, float, float]: #TODO
         return (0, 0, 0, 0)
 
-class CubicBezier:
+class CubicBezier(Segment):
     def __init__(self, start: complex = 0, p1: complex = 0, p2: complex = 0, end: complex = 0):
         self.start = start
         self.p1 = p1
@@ -222,6 +239,8 @@ class Document:
     def __repr__(self):
         return f"Document(id={self.id!r})"
 
+#endregion shapeDefs
+
 def readStyle(element: svgelements.SVGElement) -> Style:
     return Style(
         strokeWidth=getattr(element, "stroke_width", 1),
@@ -233,11 +252,13 @@ def readStyle(element: svgelements.SVGElement) -> Style:
 def parseSvg(svgPath: str):
     document = Document()
     svg = svgelements.SVG.parse(svgPath)
+    scale = drawableArea[1] / svg.height #TODO: add warning when document height and width don't match
     for element in svg.elements():
         match type(element):
             case svgelements.Rect:
                 builder = PathObject(element.id)
                 builder.style = readStyle(element)
+                builder.transform @= [scale, 0, 0, scale, 0, 0] # temporary fix
                 builder.transform @= getattr(element, "transform", [1, 0, 0, 1, 0, 0])
 
                 xmin = element.x
@@ -257,6 +278,84 @@ def parseSvg(svgPath: str):
         path.applyTransformations()
     return document
 
+# adds the contents of srcFile to the end of destFile
+def fileAppend(srcFile: TextIO, destFile: TextIO):
+    for line in srcFile:
+        destFile.write(line)
+
+# adds a gcode line to the file with the specified arguments
+def addLine(args: dict[str, str | float], file: TextIO):
+    line = ""
+    lineIsValid = False # lines must contain x, y, or z arg
+    for param, val in args.items():
+        # check if param is not already set to current value
+        val = float(val)
+        match param:
+            case "X":
+                if val == penPos[0]:
+                    continue
+                penPos[0] = val
+                lineIsValid = True
+            case "Y":
+                val = drawableArea[1] - val # flip point along y axis
+                if val == penPos[1]:
+                    continue
+                penPos[1] = val
+                lineIsValid = True
+            case "Z":
+                if val == penPos[2]:
+                    continue
+                penPos[2] = val
+                lineIsValid = True
+
+        line += f"{param}{f"{val:.5f}".rstrip("0").rstrip(".")} "
+    if lineIsValid:
+        file.write(line.strip() + "\n")
+
+# moves pen to the specified location
+def penMove(pos: complex, file: TextIO, travel: bool = False):
+    distSquared = (pos.real - penPos[0]) ** 2 + (pos.imag - (drawableArea[1] - penPos[1])) ** 2
+    if distSquared >= .000001: # moves shorter than .001 mm are probably caused by rounding errors
+        if travel:
+            if distSquared >= shortTravelThreshold ** 2: # long travel
+                addLine({"G": "1", "Z": penHeights[States.TRAVEL]}, file)
+                addLine({"G": "1", "X": str(pos.real), "Y": str(pos.imag)}, file)
+                addLine({"G": "1", "Z": penHeights[States.DRAW]}, file)
+            else: # short travel
+                addLine({"G": "1", "X": str(pos.real), "Y": str(pos.imag)}, file)
+        else: # draw moves
+            if penPos[2] != penHeights[States.DRAW]:
+                addLine({"G": "1", "Z": penHeights[States.DRAW]}, file)
+            addLine({"G": "1", "X": str(pos.real), "Y": str(pos.imag), "E": "1"}, file)
+
+def addPath(object: PathObject, file: TextIO):
+    objectGeo: Path = object.geometry
+    for segment in objectGeo.segments:
+        if isinstance(segment, Line):
+            penMove(segment.start, file, True)
+            penMove(segment.end, file)
+        elif isinstance(segment, Arc):
+            print("Ignoring arc")
+        elif isinstance(segment, QuadraticBezier):
+            print("Ignoring quadratic bezier")
+        elif isinstance(segment, CubicBezier):
+            print("Ignoring cubic bezier")
+
 document = parseSvg(fileIn)
 
-print(document)
+try:
+    with open(fileOut, "w") as destFile:
+        with open(prefixFile, "r") as srcFile:
+            fileAppend(srcFile, destFile)
+        with open(fileIn, "r") as srcFile:
+            destFile.write(f"; LINE_WIDTH: {penWidth}\n")
+            for object in document.objects:
+                addPath(object, destFile)
+        with open(suffixFile, "r") as srcFile:
+            fileAppend(srcFile, destFile)
+    print("Post process completed sucessfully")
+except PermissionError as e:
+    print(f'Could not open file "{e.filename}". Another program might be editing it.')
+except FileNotFoundError as e:
+    print(f'Could not find file "{e.filename}".')
+#input() # wait for user to press enter before closing window
