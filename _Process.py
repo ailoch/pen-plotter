@@ -2,6 +2,7 @@ import math
 from abc import ABC, abstractmethod
 from enum import Enum, auto
 from typing import TextIO, Self
+from scipy.integrate import quad
 import svgelements
 #TODO: use dataclasses
 
@@ -19,6 +20,7 @@ penHeights = {States.DRAW: 1, States.TRAVEL: 5} # pen heights in mm
 penWidth = .7 # pen width in mm (only used for display)
 
 shortTravelThreshold = .7 # travels below this distance will not lift the pen
+maxTesselatedLineLength = .5 # max length per line on tesselated paths in mm
 penPos: list[float] = [128, 128, 10] # initial pen position
 drawableArea = (215.9, 230) #TODO: implement bounds checking
 
@@ -90,12 +92,21 @@ class Transform:
             other[1]*self.matrix[4] + other[3]*self.matrix[5] + other[5]
         ]
 
-    def apply(self, p: complex):
+    def apply(self, p: complex) -> complex:
         x, y = p.real, p.imag
 
         return complex(
             self.matrix[0]*x + self.matrix[2]*y + self.matrix[4],
             self.matrix[1]*x + self.matrix[3]*y + self.matrix[5]
+        )
+
+    # same as apply(), but ignores translations
+    def applyVector(self, v: complex) -> complex:
+        x, y = v.real, v.imag
+
+        return complex(
+            self.matrix[0]*x + self.matrix[2]*y,
+            self.matrix[1]*x + self.matrix[3]*y
         )
 
     def translate(self, x: float, y: float | None = None):
@@ -185,22 +196,60 @@ class Line(Segment):
         return (xmin, ymin, xmax, ymax)
 
 class Arc(Segment):
-    #TODO: storage
+    def __init__(self, center: complex = 0, u: complex = 1, v: complex = 1j, t0: float = 0, sweep: float = 2*math.pi):
+        self.center = center
+        self.u = u
+        self.v = v
+        self.t0 = t0
+        self.sweep = sweep # sweep is between -2pi and 2pi
 
-    def length(self) -> float: #TODO
-        return 0
+    def __repr__(self):
+        return f"Arc(center={self.center}, u={self.u}, v={self.v}, t0={self.t0}, sweep={self.sweep})"
 
-    def point(self, t: float) -> complex: #TODO
-        return 0
+    def _speed(self, theta: float) -> float:
+        dx = -self.u.real*math.sin(theta) + self.v.real*math.cos(theta)
+        dy = -self.u.imag*math.sin(theta) + self.v.imag*math.cos(theta)
+        return math.hypot(dx, dy)
 
-    def applyTransform(self, t: Transform): #TODO
-        pass
+    def _containsAngle(self, theta: float) -> bool:
+        if self.t0 <= theta < self.t0 + self.sweep:
+            return True
+        elif self.t0 + self.sweep <= theta <= self.t0:
+            return True
+        return False
 
-    def reverse(self): #TODO
-        pass
+    def _pointAtAngle(self, theta: float) -> complex:
+        return self.center + self.u*math.cos(theta) + self.v*math.sin(theta)
 
-    def bounds(self) -> tuple[float, float, float, float]: #TODO
-        return (0, 0, 0, 0)
+    def length(self) -> float:
+        length, error = quad(self._speed, self.t0, self.t0 + self.sweep)
+        return abs(length)
+
+    def point(self, t: float) -> complex:
+        theta = self.t0 + t*self.sweep
+        return self._pointAtAngle(theta)
+
+    def applyTransform(self, t: Transform):
+        self.center = t.apply(self.center)
+        self.u = t.applyVector(self.u)
+        self.v = t.applyVector(self.v)
+
+    def reverse(self):
+        self.t0 += self.sweep
+        self.sweep = -self.sweep
+
+    def bounds(self) -> tuple[float, float, float, float]:
+        pts = [self.point(0), self.point(1)]
+        theta = math.atan2(self.v.real, self.u.real)
+        pts.append(self._pointAtAngle(theta))
+        pts.append(self._pointAtAngle(theta + math.pi))
+        theta = math.atan2(self.v.real, self.u.real)
+        pts.append(self._pointAtAngle(theta))
+        pts.append(self._pointAtAngle(theta + math.pi))
+
+        xs = [p.real for p in pts]
+        ys = [p.imag for p in pts]
+        return (min(xs), min(ys), max(xs), max(ys))
 
 class QuadraticBezier(Segment):
     def __init__(self, start: complex = 0, p1: complex = 0, end: complex = 0):
@@ -335,15 +384,22 @@ def parseSvgElement(node: svgelements.SVGElement, transform: Transform, document
         temp += Line(xmax+ymax, xmax+ymin)
         temp += Line(xmax+ymin, xmin+ymin)
         document.add(temp)
+    elif isinstance(node, (svgelements.Circle, svgelements.Ellipse)):
+        temp = PathObject(str(node.id)) # str() to make pylance happy
+        temp.style = readStyle(node)
+        temp.transform = transform
+
+        center = node.cx + node.cy*1j # type: ignore
+        temp += Arc(center, node.rx, node.ry * 1j) # type: ignore
+        document.add(temp)
     elif isinstance(node, svgelements.Group):
         for child in node:
             parseSvgElement(child, transform, document)
-    # isinstance() won't work on SVGElement because it encapsulates other svg classes
+    # isinstance() won't work on SVGElement because it encapsulates all other svg classes
     elif isinstance(node, svgelements.SVG) or type(node) == svgelements.svgelements.SVGElement:
         pass # these element types can be safely ignored because they are not geometry
     else:
-        pass
-        #print(f"Ignored {type(node)} with name {node.id}")
+        print(f"Ignored {type(node)} with name {node.id}")
 
 def parseSvg(svgPath: str) -> Document:
     document = Document()
@@ -410,6 +466,12 @@ def penMove(pos: complex, file: TextIO, travel: bool = False):
                 addLine({"G": "1", "Z": penHeights[States.DRAW]}, file)
             addLine({"G": "1", "X": str(pos.real), "Y": str(pos.imag), "E": "1"}, file)
 
+def tesselate(segment: Segment): #TODO: adaptive tesselation
+    if isinstance(segment, Line):
+        return [segment.start, segment.end]
+    nSegments = math.ceil(segment.length() / maxTesselatedLineLength)
+    return [segment.point(t / nSegments) for t in range(nSegments+1)]
+
 def addPath(object: PathObject, file: TextIO):
     objectGeo: Path = object.geometry
     for segment in objectGeo.segments:
@@ -417,11 +479,14 @@ def addPath(object: PathObject, file: TextIO):
             penMove(segment.start, file, True)
             penMove(segment.end, file)
         elif isinstance(segment, Arc):
-            print("Ignoring arc")
+            penMove(segment.point(0), file, True)
+            points = tesselate(segment)
+            for point in points:
+                penMove(point, file)
         elif isinstance(segment, QuadraticBezier):
-            print("Ignoring quadratic bezier")
+            print(f"Ignoring quadratic bezier {segment}")
         elif isinstance(segment, CubicBezier):
-            print("Ignoring cubic bezier")
+            print(f"Ignoring cubic bezier {segment}")
 
 document = parseSvg(fileIn)
 
