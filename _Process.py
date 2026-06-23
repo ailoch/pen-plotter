@@ -36,21 +36,27 @@ class Style:
 
 # stores an affine transformation (rotation, scaling, shear, transform)
 class Transform: #TODO: add rotate, translate, etc. functions
-    def __init__(self, matrix: list[float] = [1, 0, 0, 1, 0, 0]):
+    def __init__(self, matrix: list[float] = [1.0, 0, 0, 1, 0, 0]):
         self.matrix = matrix
 
     def __repr__(self):
         return f"Transform(matrix={self.matrix!r})"
 
+    def __matmul__(self, other: list[float]):
+        return Transform(self._getTransform(other))
+
     def __imatmul__(self, other: list[float]):
-        return Transform([
+        return Transform(self._getTransform(other))
+
+    def _getTransform(self, other: list[float]):
+        return [
             self.matrix[0]*other[0] + self.matrix[2]*other[1],
             self.matrix[1]*other[0] + self.matrix[3]*other[1],
             self.matrix[0]*other[2] + self.matrix[2]*other[3],
             self.matrix[1]*other[2] + self.matrix[3]*other[3],
             self.matrix[0]*other[4] + self.matrix[2]*other[5] + self.matrix[4],
             self.matrix[1]*other[4] + self.matrix[3]*other[5] + self.matrix[5]
-        ])
+        ]
 
     def apply(self, p: complex):
         x, y = p.real, p.imag
@@ -59,6 +65,31 @@ class Transform: #TODO: add rotate, translate, etc. functions
             self.matrix[0]*x + self.matrix[2]*y + self.matrix[4],
             self.matrix[1]*x + self.matrix[3]*y + self.matrix[5]
         )
+
+    def translate(self, x: float, y: float | None = None):
+        if not y:
+            y = x
+        self.matrix = self._getTransform([1, 0, 0, 1, x, y])
+
+    def scale(self, sx: float, sy: float | None = None):
+        if not sy:
+            sy = sx
+        self.matrix = self._getTransform([sx, 0, 0, sy, 0, 0])
+
+    def rotate(self, angle: float, cx: float = 0, cy: float = 0):
+        rot = [math.cos(math.radians(angle)), math.sin(math.radians(angle)), -math.sin(math.radians(angle)), math.cos(math.radians(angle)), 0, 0]
+        if cx == 0 and cy == 0:
+            self.matrix = self._getTransform(rot)
+        else:
+            self.matrix = self._getTransform([1, 0, 0, 1, cx, cy])
+            self.matrix = self._getTransform(rot)
+            self.matrix = self._getTransform([1, 0, 0, 1, -cx, -cy])
+
+    def skewX(self, angle: float):
+        self.matrix = self._getTransform([1, 0, math.tan(math.radians(angle)), 1, 0, 0])
+
+    def skewY(self, angle: float):
+        self.matrix = self._getTransform([1, math.tan(math.radians(angle)), 0, 1, 0, 0])
 
 # wrapper for different types of path segments
 class Segment(ABC):
@@ -258,7 +289,7 @@ def parseSvg(svgPath: str):
             case svgelements.Rect:
                 builder = PathObject(element.id)
                 builder.style = readStyle(element)
-                builder.transform @= [scale, 0, 0, scale, 0, 0] # temporary fix
+                builder.transform.scale(scale)
                 builder.transform @= getattr(element, "transform", [1, 0, 0, 1, 0, 0])
 
                 xmin = element.x
@@ -358,4 +389,4 @@ except PermissionError as e:
     print(f'Could not open file "{e.filename}". Another program might be editing it.')
 except FileNotFoundError as e:
     print(f'Could not find file "{e.filename}".')
-#input() # wait for user to press enter before closing window
+input() # wait for user to press enter before closing window
