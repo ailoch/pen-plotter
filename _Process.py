@@ -1,7 +1,7 @@
 import math
 from abc import ABC, abstractmethod
 from enum import Enum, auto
-from typing import TextIO
+from typing import TextIO, Self
 import svgelements
 #TODO: use dataclasses
 
@@ -35,18 +35,27 @@ class Style:
         return f"Style(strokeWidth={self.strokeWidth}, strokeColor={self.strokeColor!r}, fillColor={self.fillColor!r})"
 
 # stores an affine transformation (rotation, scaling, shear, transform)
-class Transform: #TODO: add rotate, translate, etc. functions
-    def __init__(self, matrix: list[float] = [1.0, 0, 0, 1, 0, 0]):
-        self.matrix = matrix
+class Transform:
+    def __init__(self, matrix: list[float] | None = None):
+        if matrix:
+            self.matrix = matrix
+        else:
+            self.matrix = [1, 0, 0, 1, 0, 0]
 
     def __repr__(self):
         return f"Transform(matrix={self.matrix!r})"
 
-    def __matmul__(self, other: list[float]):
-        return Transform(self._getTransform(other))
+    def __matmul__(self, other: list[float] | Self):
+        if isinstance(other, list):
+            return Transform(self._getTransform(other))
+        else:
+            return Transform(self._getTransform(other.matrix))
 
-    def __imatmul__(self, other: list[float]):
-        return Transform(self._getTransform(other))
+    def __imatmul__(self, other: list[float] | Self):
+        if isinstance(other, list):
+            return Transform(self._getTransform(other))
+        else:
+            return Transform(self._getTransform(other.matrix))
 
     def _getTransform(self, other: list[float]):
         return [
@@ -280,31 +289,45 @@ def readStyle(element: svgelements.SVGElement) -> Style:
         #fillColor=getattr(element, "fill", [0, 0, 0])
     )
 
-def parseSvg(svgPath: str):
+def parseSvgElement(node: svgelements.SVGElement, transform: Transform, document: Document):
+    print(transform, node.id)
+    transform @= Transform(getattr(node, "transform", None))
+    print(transform, "\n")
+    if isinstance(node, svgelements.Rect):
+        temp = PathObject(str(node.id)) # str() to make pylance happy
+        temp.style = readStyle(node)
+        temp.transform = transform
+
+        # pylance seems to think node.x and node.y are None (they are actually floats)
+        xmin = node.x
+        xmax = node.x + node.width # type: ignore
+        ymin = node.y * 1j # type: ignore
+        ymax = (node.y + node.height) * 1j # type: ignore
+        temp += Line(xmin+ymin, xmin+ymax)
+        temp += Line(xmin+ymax, xmax+ymax)
+        temp += Line(xmax+ymax, xmax+ymin)
+        temp += Line(xmax+ymin, xmin+ymin)
+        document.add(temp)
+    elif isinstance(node, svgelements.Group):
+        for child in node:
+            parseSvgElement(child, transform, document)
+    # isinstance() won't work on SVGElement because it encapsulates other svg classes
+    elif isinstance(node, svgelements.SVG) or type(node) == svgelements.svgelements.SVGElement:
+        pass # these element types can be safely ignored because they are not geometry
+    else:
+        pass
+        #print(f"Ignored {type(node)} with name {node.id}")
+
+def parseSvg(svgPath: str) -> Document:
     document = Document()
     svg = svgelements.SVG.parse(svgPath)
-    scale = drawableArea[1] / svg.height #TODO: add warning when document height and width don't match
-    for element in svg.elements():
-        match type(element):
-            case svgelements.Rect:
-                builder = PathObject(element.id)
-                builder.style = readStyle(element)
-                builder.transform.scale(scale)
-                builder.transform @= getattr(element, "transform", [1, 0, 0, 1, 0, 0])
+    transform = Transform()
+    #TODO: add warning when document height and width don't match
+    transform.scale(svg.viewbox.height / svg.height) # undo svgelements trying to scale document to viewport
+    transform.scale(drawableArea[1] / svg.height) # scale to print area
 
-                xmin = element.x
-                xmax = element.x + element.width
-                ymin = element.y * 1j
-                ymax = (element.y + element.height) * 1j
-                builder += Line(xmin+ymin, xmin+ymax)
-                builder += Line(xmin+ymax, xmax+ymax)
-                builder += Line(xmax+ymax, xmax+ymin)
-                builder += Line(xmax+ymin, xmin+ymin)
-                document.add(builder)
-            case svgelements.SVG | svgelements.SVGElement:
-                pass # these element types can be safely ignored because they are not geometry
-            case _:
-                print(f"Ignored {type(element)} with name {element.id}")
+    for child in svg:
+        parseSvgElement(child, transform, document)
     for path in document.objects:
         path.applyTransformations()
     return document
