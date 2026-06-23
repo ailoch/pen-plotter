@@ -57,6 +57,18 @@ class Transform:
         else:
             return Transform(self._getTransform(other.matrix))
 
+    def __mul__(self, other: list[float] | Self):
+        if isinstance(other, list):
+            return Transform(self._getReverseTransform(other))
+        else:
+            return Transform(self._getReverseTransform(other.matrix))
+
+    def __imul__(self, other: list[float] | Self):
+        if isinstance(other, list):
+            return Transform(self._getReverseTransform(other))
+        else:
+            return Transform(self._getReverseTransform(other.matrix))
+
     def _getTransform(self, other: list[float]):
         return [
             self.matrix[0]*other[0] + self.matrix[2]*other[1],
@@ -65,6 +77,17 @@ class Transform:
             self.matrix[1]*other[2] + self.matrix[3]*other[3],
             self.matrix[0]*other[4] + self.matrix[2]*other[5] + self.matrix[4],
             self.matrix[1]*other[4] + self.matrix[3]*other[5] + self.matrix[5]
+        ]
+
+    # returnss other@self instrad of self@other
+    def _getReverseTransform(self, other: list[float]):
+        return [
+            other[0]*self.matrix[0] + other[2]*self.matrix[1],
+            other[1]*self.matrix[0] + other[3]*self.matrix[1],
+            other[0]*self.matrix[2] + other[2]*self.matrix[3],
+            other[1]*self.matrix[2] + other[3]*self.matrix[3],
+            other[0]*self.matrix[4] + other[2]*self.matrix[5] + other[4],
+            other[1]*self.matrix[4] + other[3]*self.matrix[5] + other[5]
         ]
 
     def apply(self, p: complex):
@@ -78,27 +101,33 @@ class Transform:
     def translate(self, x: float, y: float | None = None):
         if not y:
             y = x
-        self.matrix = self._getTransform([1, 0, 0, 1, x, y])
+        self.matrix = self._getReverseTransform([1, 0, 0, 1, x, y])
 
     def scale(self, sx: float, sy: float | None = None):
         if not sy:
             sy = sx
-        self.matrix = self._getTransform([sx, 0, 0, sy, 0, 0])
+        self.matrix = self._getReverseTransform([sx, 0, 0, sy, 0, 0])
 
     def rotate(self, angle: float, cx: float = 0, cy: float = 0):
         rot = [math.cos(math.radians(angle)), math.sin(math.radians(angle)), -math.sin(math.radians(angle)), math.cos(math.radians(angle)), 0, 0]
         if cx == 0 and cy == 0:
-            self.matrix = self._getTransform(rot)
+            self.matrix = self._getReverseTransform(rot)
         else:
-            self.matrix = self._getTransform([1, 0, 0, 1, cx, cy])
-            self.matrix = self._getTransform(rot)
-            self.matrix = self._getTransform([1, 0, 0, 1, -cx, -cy])
+            self.matrix = self._getReverseTransform([1, 0, 0, 1, cx, cy])
+            self.matrix = self._getReverseTransform(rot)
+            self.matrix = self._getReverseTransform([1, 0, 0, 1, -cx, -cy])
 
     def skewX(self, angle: float):
-        self.matrix = self._getTransform([1, 0, math.tan(math.radians(angle)), 1, 0, 0])
+        self.matrix = self._getReverseTransform([1, 0, math.tan(math.radians(angle)), 1, 0, 0])
 
     def skewY(self, angle: float):
-        self.matrix = self._getTransform([1, math.tan(math.radians(angle)), 0, 1, 0, 0])
+        self.matrix = self._getReverseTransform([1, math.tan(math.radians(angle)), 0, 1, 0, 0])
+
+    def flipAlongX(self):
+        self.matrix = self._getReverseTransform([-1, 0, 0, 1, 0, 0])
+
+    def flipAlongY(self):
+        self.matrix = self._getReverseTransform([1, 0, 0, -1, 0, 0])
 
 # wrapper for different types of path segments
 class Segment(ABC):
@@ -290,9 +319,7 @@ def readStyle(element: svgelements.SVGElement) -> Style:
     )
 
 def parseSvgElement(node: svgelements.SVGElement, transform: Transform, document: Document):
-    print(transform, node.id)
     transform @= Transform(getattr(node, "transform", None))
-    print(transform, "\n")
     if isinstance(node, svgelements.Rect):
         temp = PathObject(str(node.id)) # str() to make pylance happy
         temp.style = readStyle(node)
@@ -329,6 +356,8 @@ def parseSvg(svgPath: str) -> Document:
     for child in svg:
         parseSvgElement(child, transform, document)
     for path in document.objects:
+        # transform to printer space
+        path.transform *= [1.0, 0.0, 0.0, -1.0, 0.0, 256.0]
         path.applyTransformations()
     return document
 
@@ -351,7 +380,6 @@ def addLine(args: dict[str, str | float], file: TextIO):
                 penPos[0] = val
                 lineIsValid = True
             case "Y":
-                val = drawableArea[1] - val # flip point along y axis
                 if val == penPos[1]:
                     continue
                 penPos[1] = val
@@ -368,7 +396,7 @@ def addLine(args: dict[str, str | float], file: TextIO):
 
 # moves pen to the specified location
 def penMove(pos: complex, file: TextIO, travel: bool = False):
-    distSquared = (pos.real - penPos[0]) ** 2 + (pos.imag - (drawableArea[1] - penPos[1])) ** 2
+    distSquared = (pos.real - penPos[0]) ** 2 + (pos.imag - penPos[1]) ** 2
     if distSquared >= .000001: # moves shorter than .001 mm are probably caused by rounding errors
         if travel:
             if distSquared >= shortTravelThreshold ** 2: # long travel
