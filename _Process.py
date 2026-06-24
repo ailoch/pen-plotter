@@ -392,6 +392,8 @@ def parseSvgElement(node: svgelements.SVGElement, transform: Transform, document
         center = node.cx + node.cy*1j # type: ignore
         temp += Arc(center, node.rx, node.ry * 1j) # type: ignore
         document.add(temp)
+    elif isinstance(node, svgelements.Path):
+        print(node)
     elif isinstance(node, svgelements.Group):
         for child in node:
             parseSvgElement(child, transform, document)
