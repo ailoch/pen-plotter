@@ -8,7 +8,7 @@ G17
 
 M400 ; wait for buffer to clear
 
-G1 Z10
+MOVE_TRAVEL_HEIGHT
 G1 X128 Y256 F9000
 G1 Z50 F600
 G1 Z48

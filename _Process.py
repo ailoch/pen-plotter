@@ -11,18 +11,27 @@ class States(Enum):
     TRAVEL = auto()
 
 # plot settings
+#TODO: move settings to json
 fileIn = "testDrawing.svg" # hardcoded to speed up testing, need to ask user later
 fileOut = "testDrawing.gcode"
 prefixFile = "ーstartCode.gcode"
 suffixFile = "ーendCode.gcode"
 
 penHeights = {States.DRAW: 1, States.TRAVEL: 5} # pen heights in mm
+penSpeeds = {States.DRAW: 1800, States.TRAVEL: 6000} # mm/min
+penAccels = {States.DRAW: 3000, States.TRAVEL: 10000} # mm/s^2
 penWidth = .7 # pen width in mm (only used for display)
+penOffset: tuple[float, float] = (-40, 5) # pen offset from extruder
+loadDelay = 20 # delay (seconds) printer waits while pen is loaded
 
 shortTravelThreshold = .7 # travels below this distance will not lift the pen
 maxTesselatedLineLength = .5 # max length per line on tesselated paths in mm
+#TODO: turn printer vars into plotter class
 penPos: list[float] = [128, 128, 10] # initial pen position
+lastPenSpeed: float = 0
+lastPenAccel: float = 0
 drawableArea = (215.9, 230) #TODO: implement bounds checking
+showPenPos = True # if false, nozzle position will be shown in slicer
 
 #region shapeDefs
 
@@ -456,23 +465,35 @@ def parseSvg(svgPath: str) -> Document:
         parseSvgElement(child, transform, document)
     for path in document.objects:
         # transform to printer space
-        path.transform *= [1.0, 0.0, 0.0, -1.0, 0.0, 256.0]
+        path.transform *= [1, 0, 0, -1, -penOffset[0], 256 + -penOffset[1]]
         path.applyTransformations()
     return document
 
 # adds the contents of srcFile to the end of destFile
-def fileAppend(srcFile: TextIO, destFile: TextIO):
+#TODO: add more flexibility to replace dict (mabye regex?) 
+def fileAppend(srcFile: TextIO, destFile: TextIO, replace: dict[str, str] = {}):
     for line in srcFile:
-        destFile.write(line)
+        destFile.write(replace.get(line, line))
 
 # adds a gcode line to the file with the specified arguments
+# param "A" sets printer accel using m204 in seperate instruction
 def addLine(args: dict[str, str | float], file: TextIO):
+    global lastPenSpeed, lastPenAccel
     line = ""
     lineIsValid = False # lines must contain x, y, or z arg (g2/3 are exempt)
     for param, val in args.items():
         # check if param is not already set to current value
         val = float(val)
         match param:
+            case "A":
+                if val != float(lastPenAccel):
+                    file.write(f"M204 S{args["A"]}\n")
+                    lastPenAccel = val
+                continue
+            case "F":
+                if val == lastPenSpeed:
+                    continue
+                lastPenSpeed = val
             case "G":
                 if val == 2 or val == 3:
                     lineIsValid = True
@@ -503,14 +524,14 @@ def penMove(pos: complex, file: TextIO, travel: bool = False):
         if travel:
             if distSquared >= shortTravelThreshold ** 2: # long travel
                 addLine({"G": "1", "Z": penHeights[States.TRAVEL]}, file)
-                addLine({"G": "1", "X": str(pos.real), "Y": str(pos.imag)}, file)
+                addLine({"G": "1", "X": str(pos.real), "Y": str(pos.imag), "F": penSpeeds[States.TRAVEL], "A": penAccels[States.TRAVEL]}, file)
                 addLine({"G": "1", "Z": penHeights[States.DRAW]}, file)
             else: # short travel
-                addLine({"G": "1", "X": str(pos.real), "Y": str(pos.imag)}, file)
+                addLine({"G": "1", "X": str(pos.real), "Y": str(pos.imag), "F": penSpeeds[States.DRAW], "A": penAccels[States.DRAW]}, file)
         else: # draw moves
             if penPos[2] != penHeights[States.DRAW]:
                 addLine({"G": "1", "Z": penHeights[States.DRAW]}, file)
-            addLine({"G": "1", "X": str(pos.real), "Y": str(pos.imag), "E": "1"}, file)
+            addLine({"G": "1", "X": str(pos.real), "Y": str(pos.imag), "E": "1", "F": penSpeeds[States.DRAW], "A": penAccels[States.DRAW]}, file)
 
 def tesselate(segment: Segment): #TODO: adaptive tesselation
     if isinstance(segment, Line):
@@ -529,7 +550,7 @@ def addPath(object: PathObject, file: TextIO):
             if abs(abs(segment.u) - abs(segment.v)) <= .001:
                 centerOffset = segment.center - segment.point(0)
                 end = segment.point(1)
-                params = {"G": "2", "X": end.real, "Y": end.imag, "I": centerOffset.real, "J": centerOffset.imag, "E": "1"}
+                params = {"G": "2", "X": end.real, "Y": end.imag, "I": centerOffset.real, "J": centerOffset.imag, "E": "1", "F": penSpeeds[States.DRAW], "A": penAccels[States.DRAW]}
                 if segment.sweep < 0:
                     params["G"] = "3"
                 addLine(params, file)
@@ -550,13 +571,27 @@ document = parseSvg(fileIn)
 try:
     with open(fileOut, "w") as destFile:
         with open(prefixFile, "r") as srcFile:
-            fileAppend(srcFile, destFile)
+            replace = {
+                "; MAX_Z_HEIGHT\n": f"; max_z_height: {penHeights[States.TRAVEL]}\n",
+                "LOAD_DELAY\n": f"G4 S{loadDelay}\n"
+            }
+            if showPenPos:
+                replace.update({
+                    "; BED_EXCLUDE_AREA\n": f"; bed_exclude_area = 0x0,256x0,256x256,{drawableArea[0]}x256,{drawableArea[0]}x{256-drawableArea[1]},0x{256-drawableArea[1]}\n",
+                    "; EXTRUDER_OFFSET\n": f"; extruder_offset = {penOffset[0]}x{penOffset[1]}\n",
+                })
+            else:
+                replace.update({
+                    "; BED_EXCLUDE_AREA\n": f"; bed_exclude_area = 0x0,256x0,256x{256-drawableArea[1]},{256-drawableArea[0]}x{256-drawableArea[1]},{256-drawableArea[0]}x256,0x256\n",
+                    "; EXTRUDER_OFFSET\n": f"; extruder_offset = 0x2\n", # 0x2 is the default offset
+                })
+            fileAppend(srcFile, destFile, replace)
         with open(fileIn, "r") as srcFile:
             destFile.write(f"; LINE_WIDTH: {penWidth}\n")
             for object in document.objects:
                 addPath(object, destFile)
         with open(suffixFile, "r") as srcFile:
-            fileAppend(srcFile, destFile)
+            fileAppend(srcFile, destFile, {"MOVE_TRAVEL_HEIGHT\n": f"G1 Z{penHeights[States.TRAVEL]}\n"})
     print("Post process completed sucessfully")
 except PermissionError as e:
     print(f'Could not open file "{e.filename}". Another program might be editing it.')

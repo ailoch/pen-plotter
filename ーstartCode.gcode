@@ -1,13 +1,13 @@
 ; HEADER_BLOCK_START
 ; BambuStudio 02.07.00.55
-; max_z_height: 0.20
+; MAX_Z_HEIGHT
 ; filament: 1
 ; HEADER_BLOCK_END
 
 ; CONFIG_BLOCK_START
-; bed_exclude_area = 0x0,18x0,18x28,0x28
+; BED_EXCLUDE_AREA
 ; curr_bed_type = High Temp Plate
-; extruder_offset = 0x2
+; EXTRUDER_OFFSET
 ; gcode_flavor = marlin
 ; host_type = octoprint
 ; nozzle_diameter = 0.4
@@ -123,7 +123,7 @@ G21 ; use mm
 M204 S7500
 
 ; allow pen to be loaded
-G4 S20
+LOAD_DELAY
 
 ; LAYER_HEIGHT: 0.2
 ; FEATURE: Outer wall
