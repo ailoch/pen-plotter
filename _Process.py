@@ -209,7 +209,7 @@ class Arc(Segment):
         return self.center + self.u*math.cos(theta) + self.v*math.sin(theta)
 
     def length(self) -> float:
-        length, error = quad(self._speed, self.t0, self.t0 + self.sweep)
+        length, _ = quad(self._speed, self.t0, self.t0 + self.sweep)
         return abs(length)
 
     def point(self, t: float) -> complex:
@@ -228,11 +228,15 @@ class Arc(Segment):
     def bounds(self) -> tuple[float, float, float, float]:
         pts = [self.point(0), self.point(1)]
         theta = math.atan2(self.v.real, self.u.real)
-        pts.append(self._pointAtAngle(theta))
-        pts.append(self._pointAtAngle(theta + math.pi))
+        if self._containsAngle(theta):
+            pts.append(self._pointAtAngle(theta))
+        if self._containsAngle(theta + math.pi):
+            pts.append(self._pointAtAngle(theta + math.pi))
         theta = math.atan2(self.v.real, self.u.real)
-        pts.append(self._pointAtAngle(theta))
-        pts.append(self._pointAtAngle(theta + math.pi))
+        if self._containsAngle(theta):
+            pts.append(self._pointAtAngle(theta))
+        if self._containsAngle(theta + math.pi):
+            pts.append(self._pointAtAngle(theta + math.pi))
 
         xs = [p.real for p in pts]
         ys = [p.imag for p in pts]
@@ -244,17 +248,31 @@ class QuadraticBezier(Segment):
     p1: complex = 0
     end: complex = 0
 
-    def length(self) -> float: #TODO
-        return 0
+    def _speed(self, t: float) -> complex:
+        d = (
+            2 * (1-t) * (self.p1-self.start) +
+            2 * t * (self.end-self.p1)
+        )
+        return math.hypot(d.real, d.imag)
 
-    def point(self, t: float) -> complex: #TODO
-        return 0
+    def length(self) -> float:
+        length, _ = quad(self._speed, 0, 1)
+        return length
 
-    def applyTransform(self, t: Transform): #TODO
-        pass
+    def point(self, t: float) -> complex:
+        return (
+            self.start * (1-t) ** 2 +
+            self.p1 * t * 2 * (1-t) +
+            self.end * t**2
+        )
 
-    def reverse(self): #TODO
-        pass
+    def applyTransform(self, t: Transform):
+        self.start = t.apply(self.start)
+        self.p1 = t.apply(self.p1)
+        self.end = t.apply(self.end)
+
+    def reverse(self):
+        self.start, self.end = self.end, self.start
 
     def bounds(self) -> tuple[float, float, float, float]: #TODO
         return (0, 0, 0, 0)
@@ -266,17 +284,35 @@ class CubicBezier(Segment):
     p2: complex = 0
     end: complex = 0
 
-    def length(self) -> float: #TODO
-        return 0
+    def _speed(self, t: float) -> complex:
+        d = (
+            3 * (1-t) ** 2 * (self.p1-self.start) +
+            6 * (1-t) * t * (self.p2-self.p1) +
+            3 * t**2 * (self.end-self.p2)
+        )
+        return math.hypot(d.real, d.imag)
 
-    def point(self, t: float) -> complex: #TODO
-        return 0
+    def length(self) -> float:
+        length, _ = quad(self._speed, 0, 1)
+        return length
 
-    def applyTransform(self, t: Transform): #TODO
-        pass
+    def point(self, t: float) -> complex:
+        return (
+            self.start * (1-t) ** 3 +
+            self.p1 * t * 3 * (1-t) ** 2 +
+            self.p2 * t**2 * 3 * (1-t) +
+            self.end * t**3
+        )
 
-    def reverse(self): #TODO
-        pass
+    def applyTransform(self, t: Transform):
+        self.start = t.apply(self.start)
+        self.p1 = t.apply(self.p1)
+        self.p2 = t.apply(self.p2)
+        self.end = t.apply(self.end)
+
+    def reverse(self):
+        self.start, self.end = self.end, self.start
+        self.p1, self.p2 = self.p2, self.p1
 
     def bounds(self) -> tuple[float, float, float, float]: #TODO
         return (0, 0, 0, 0)
@@ -501,10 +537,13 @@ def addPath(object: PathObject, file: TextIO):
                 points = tesselate(segment)
                 for point in points:
                     penMove(point, file)
-        elif isinstance(segment, QuadraticBezier):
-            print(f"Ignoring quadratic bezier {segment}")
-        elif isinstance(segment, CubicBezier):
-            print(f"Ignoring cubic bezier {segment}")
+        elif isinstance(segment, (QuadraticBezier, CubicBezier)):
+            penMove(segment.start, file, True)
+            points = tesselate(segment)
+            for point in points:
+                    penMove(point, file)
+        else:
+            print(f"Unknown path type {type(segment)}")
 
 document = parseSvg(fileIn)
 
