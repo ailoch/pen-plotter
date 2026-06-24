@@ -373,6 +373,32 @@ def parseSvgElement(node: svgelements.SVGElement, transform: Transform, document
         center = node.cx + node.cy*1j # type: ignore
         temp += Arc(center, node.rx, node.ry * 1j) # type: ignore
         document.add(temp)
+    elif isinstance(node, svgelements.Path):
+        temp = PathObject(str(node.id)) # str() to make pylance happy
+        temp.style = readStyle(node)
+        temp.transform = transform
+
+        current: complex = 0
+        start = None
+        for part in node:
+            if isinstance(part, svgelements.Move):
+                start = part.end
+                current = part.end
+            elif isinstance(part, svgelements.Line):
+                temp += Line(current, part.end)
+                current = part.end
+            elif isinstance(part, svgelements.QuadraticBezier):
+                temp += QuadraticBezier(current, part.control, part.end)
+                current = part.end
+            elif isinstance(part, svgelements.CubicBezier):
+                temp += CubicBezier(current, part.control1, part.control2, part.end)
+                current = part.end
+            elif isinstance(part, svgelements.Close):
+                temp += Line(current, start)
+                current = start
+            else:
+                print(f"Unknown path element: {type(part)} (part of {node.id})")
+        document.add(temp)
     elif isinstance(node, svgelements.Group):
         for child in node:
             parseSvgElement(child, transform, document)
