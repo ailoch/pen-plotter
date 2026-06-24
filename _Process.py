@@ -201,7 +201,7 @@ class Arc(Segment):
         self.u = u
         self.v = v
         self.t0 = t0
-        self.sweep = sweep # sweep is between -2pi and 2pi
+        self.sweep = sweep # sweep is between -2pi (ccw) and 2pi (cw)
 
     def __repr__(self):
         return f"Arc(center={self.center}, u={self.u}, v={self.v}, t0={self.t0}, sweep={self.sweep})"
@@ -425,11 +425,14 @@ def fileAppend(srcFile: TextIO, destFile: TextIO):
 # adds a gcode line to the file with the specified arguments
 def addLine(args: dict[str, str | float], file: TextIO):
     line = ""
-    lineIsValid = False # lines must contain x, y, or z arg
+    lineIsValid = False # lines must contain x, y, or z arg (g2/3 are exempt)
     for param, val in args.items():
         # check if param is not already set to current value
         val = float(val)
         match param:
+            case "G":
+                if val == 2 or val == 3:
+                    lineIsValid = True
             case "X":
                 if val == penPos[0]:
                     continue
@@ -480,9 +483,17 @@ def addPath(object: PathObject, file: TextIO):
             penMove(segment.end, file)
         elif isinstance(segment, Arc):
             penMove(segment.point(0), file, True)
-            points = tesselate(segment)
-            for point in points:
-                penMove(point, file)
+            if abs(abs(segment.u) - abs(segment.v)) <= .001:
+                centerOffset = segment.center - segment.point(0)
+                end = segment.point(1)
+                params = {"G": "2", "X": end.real, "Y": end.imag, "I": centerOffset.real, "J": centerOffset.imag, "E": "1"}
+                if segment.sweep < 0:
+                    params["G"] = "3"
+                addLine(params, file)
+            else:
+                points = tesselate(segment)
+                for point in points:
+                    penMove(point, file)
         elif isinstance(segment, QuadraticBezier):
             print(f"Ignoring quadratic bezier {segment}")
         elif isinstance(segment, CubicBezier):
