@@ -2,9 +2,9 @@ import math
 from abc import ABC, abstractmethod
 from enum import Enum, auto
 from typing import TextIO, Self
+from dataclasses import dataclass, field
 from scipy.integrate import quad
 import svgelements
-#TODO: use dataclasses
 
 class States(Enum):
     DRAW = auto()
@@ -27,14 +27,11 @@ drawableArea = (215.9, 230) #TODO: implement bounds checking
 #region shapeDefs
 
 # stores an object style (line width, color, fill)
+@dataclass
 class Style:
-    def __init__(self, strokeWidth: float = 1, strokeColor: list[int] = [0, 0, 0], fillColor: list[int] = [0, 0, 0]):
-        self.strokeWidth = strokeWidth
-        self.strokeColor = strokeColor
-        self.fillColor = fillColor
-
-    def __repr__(self):
-        return f"Style(strokeWidth={self.strokeWidth}, strokeColor={self.strokeColor!r}, fillColor={self.fillColor!r})"
+    strokeWidth: float = 1
+    strokeColor: list[int] = field(default_factory=lambda: [0, 0, 0])
+    fillColor: list[int] = field(default_factory=lambda: [0, 0, 0])
 
 # stores an affine transformation (rotation, scaling, shear, transform)
 class Transform:
@@ -143,10 +140,6 @@ class Transform:
 # wrapper for different types of path segments
 class Segment(ABC):
     @abstractmethod
-    def __repr__(self):
-        pass
-
-    @abstractmethod
     def length(self) -> float:
         """Return the arc length"""
 
@@ -166,13 +159,10 @@ class Segment(ABC):
     def bounds(self) -> tuple[float, float, float, float]:
         """Return (xmin, ymin, xmax, ymax)"""
 
+@dataclass
 class Line(Segment):
-    def __init__(self, start: complex = 0, end: complex = 0):
-        self.start = start
-        self.end = end
-
-    def __repr__(self):
-        return f"Line(start={self.start}, end={self.end})"
+    start: complex = complex()
+    end: complex = complex()
 
     def length(self) -> float:
         d = self.start - self.end
@@ -195,16 +185,13 @@ class Line(Segment):
         ymax = max(self.start.imag, self.end.imag)
         return (xmin, ymin, xmax, ymax)
 
+@dataclass
 class Arc(Segment):
-    def __init__(self, center: complex = 0, u: complex = 1, v: complex = 1j, t0: float = 0, sweep: float = 2*math.pi):
-        self.center = center
-        self.u = u
-        self.v = v
-        self.t0 = t0
-        self.sweep = sweep # sweep is between -2pi (ccw) and 2pi (cw)
-
-    def __repr__(self):
-        return f"Arc(center={self.center}, u={self.u}, v={self.v}, t0={self.t0}, sweep={self.sweep})"
+    center: complex = 0
+    u: complex = 0
+    v: complex = 0
+    t0: float = 0
+    sweep: float = 2*math.pi # sweep is between -2pi (ccw) and 2pi (cw)
 
     def _speed(self, theta: float) -> float:
         dx = -self.u.real*math.sin(theta) + self.v.real*math.cos(theta)
@@ -251,11 +238,11 @@ class Arc(Segment):
         ys = [p.imag for p in pts]
         return (min(xs), min(ys), max(xs), max(ys))
 
+@dataclass
 class QuadraticBezier(Segment):
-    def __init__(self, start: complex = 0, p1: complex = 0, end: complex = 0):
-        self.start = start
-        self.p1 = p1
-        self.end = end
+    start: complex = 0
+    p1: complex = 0
+    end: complex = 0
 
     def length(self) -> float: #TODO
         return 0
@@ -272,12 +259,12 @@ class QuadraticBezier(Segment):
     def bounds(self) -> tuple[float, float, float, float]: #TODO
         return (0, 0, 0, 0)
 
+@dataclass
 class CubicBezier(Segment):
-    def __init__(self, start: complex = 0, p1: complex = 0, p2: complex = 0, end: complex = 0):
-        self.start = start
-        self.p1 = p1
-        self.p2 = p2
-        self.end = end
+    start: complex = 0
+    p1: complex = 0
+    p2: complex = 0
+    end: complex = 0
 
     def length(self) -> float: #TODO
         return 0
@@ -295,12 +282,9 @@ class CubicBezier(Segment):
         return (0, 0, 0, 0)
 
 # stores a list of segments
+@dataclass
 class Path:
-    def __init__(self):
-        self.segments: list[Segment] = []
-
-    def __repr__(self):
-        return f"Path(segments={self.segments!r})"
+    segments: list[Segment] = field(default_factory=list)
 
     def length(self) -> float:
         len = 0
@@ -324,15 +308,12 @@ class Path:
         pass
 
 # stores a path, style, and transform
+@dataclass
 class PathObject:
-    def __init__(self, id: str):
-        self.id = id
-        self.geometry = Path()
-        self.style = Style()
-        self.transform = Transform()
-
-    def __repr__(self):
-        return f"PathObject(id={self.id!r}, geometry={self.geometry}, style={self.style}, transform={self.transform})"
+    id: str
+    geometry: Path = field(default_factory=Path)
+    style: Style = field(default_factory=Style)
+    transform : Transform = field(default_factory=Transform)
 
     def __iadd__(self, segment):
         self.geometry.segments.append(segment)
@@ -349,13 +330,13 @@ class Document:
         self.objects: list[PathObject] = []
         self.id: dict[str, PathObject] = {}
 
+    def __repr__(self):
+        return f"Document(id={self.id!r})"
+
     def add(self, obj: PathObject): #FIXME: adding an object with id that already exists will break the relation between objects and id
         self.objects.append(obj)
         if obj.id is not None:
             self.id[obj.id] = obj
-
-    def __repr__(self):
-        return f"Document(id={self.id!r})"
 
 #endregion shapeDefs
 
@@ -392,8 +373,6 @@ def parseSvgElement(node: svgelements.SVGElement, transform: Transform, document
         center = node.cx + node.cy*1j # type: ignore
         temp += Arc(center, node.rx, node.ry * 1j) # type: ignore
         document.add(temp)
-    elif isinstance(node, svgelements.Path):
-        print(node)
     elif isinstance(node, svgelements.Group):
         for child in node:
             parseSvgElement(child, transform, document)
