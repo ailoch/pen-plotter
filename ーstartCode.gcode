@@ -1,13 +1,13 @@
 ; HEADER_BLOCK_START
 ; BambuStudio 02.07.00.55
-; MAX_Z_HEIGHT
+; max_z_height: {TRAVEL_HEIGHT}
 ; filament: 1
 ; HEADER_BLOCK_END
 
 ; CONFIG_BLOCK_START
-; BED_EXCLUDE_AREA
+; bed_exclude_area = {BED_EXCLUDE_AREA}
 ; curr_bed_type = High Temp Plate
-; EXTRUDER_OFFSET
+; extruder_offset = {EXTRUDER_OFFSET}
 ; gcode_flavor = marlin
 ; host_type = octoprint
 ; nozzle_diameter = 0.4
@@ -98,32 +98,33 @@ M710 A1 S255 ;turn on MC fan
 M104 S0
 
 ;===== reset machine status =================
-M290 X40 Y40 Z2.6666666 ; allow plate to move by setting current pos (I think)
+M290 X40 Y40 Z2.6666666 ; allow plate to move by setting current pos (I think - not fully sure what this does)
 G91 ; rel pos
 M17 Z0.4 ; lower the z-motor current
 G380 S2 Z30 F300 ; safe plate move
 G380 S2 Z-25 F300
 G90 ; abs pos
 M17 X1.2 Y1.2 Z0.75 ; reset motor current to default
-M220 S100 ;Reset Feedrate
+M220 S100 ; reset feedrate
 M221 S0 ; disable e-axis
-M73.2 R1.0 ;Reset left time magnitude
+M73.2 R1.0 ; reset time left magnitude
 M1002 set_gcode_claim_speed_level : 5
 G29.1 Z0 ; clear z-trim value
 G29.2 S0; disable ABL
-M204 S10000 ; set acc
+M204 S{TRAVEL_ACCEL}
 M975 S1 ; enable vc
 
 G28 ; home
-G1 F30000
+G1 F{TRAVEL_SPEED}
 
 M83 ; rel extrusion
 M400
 G21 ; use mm
-M204 S7500
 
 ; allow pen to be loaded
-LOAD_DELAY
+G4 S{LOAD_DELAY}
 
 ; LAYER_HEIGHT: 0.2
+; LINE_WIDTH: {LINE_WIDTH}
 ; FEATURE: Outer wall
+

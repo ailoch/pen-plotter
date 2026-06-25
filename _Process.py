@@ -17,22 +17,6 @@ fileOut = "testDrawing.gcode"
 prefixFile = "ーstartCode.gcode"
 suffixFile = "ーendCode.gcode"
 
-penHeights = {States.DRAW: 1, States.TRAVEL: 5} # pen heights in mm
-penSpeeds = {States.DRAW: 1800, States.TRAVEL: 6000} # mm/min
-penAccels = {States.DRAW: 3000, States.TRAVEL: 10000} # mm/s^2
-penWidth = .7 # pen width in mm (only used for display)
-penOffset: tuple[float, float] = (-40, 5) # pen offset from extruder
-loadDelay = 20 # delay (seconds) printer waits while pen is loaded
-
-shortTravelThreshold = .7 # travels below this distance will not lift the pen
-maxTesselatedLineLength = .5 # max length per line on tesselated paths in mm
-#TODO: turn printer vars into plotter class
-penPos: list[float] = [128, 128, 10] # initial pen position
-lastPenSpeed: float = 0
-lastPenAccel: float = 0
-drawableArea = (215.9, 230) #TODO: implement bounds checking
-showPenPos = True # if false, nozzle position will be shown in slicer
-
 #region shapeDefs
 
 # stores an object style (line width, color, fill)
@@ -340,8 +324,12 @@ class CubicBezier(Segment):
         return length
 
     def _axisExtrema(self, a: float, b: float, c: float) -> list[float]:
-        
-        return []
+        disc = b*b - 4*a*c
+        if disc >= 0:
+            s = math.sqrt(disc)
+            t1 = (-b+s) / 2*a
+            t2 = (-b-s) / 2*a
+        return [t1, t2]
 
     def point(self, t: float) -> complex:
         return (
@@ -436,6 +424,146 @@ class Document:
 
 #endregion shapeDefs
 
+# handles gcode creation and I/O
+class Plotter:
+    def __init__(self):
+        self.pos: dict[str, float] = {"X": 128, "Y": 128, "Z": 10} # initial pen position
+        self.heights = {States.DRAW: 1, States.TRAVEL: 5} # pen heights in mm
+        self.speeds = {States.DRAW: 1800, States.TRAVEL: 6000} # mm/min
+        self.accels = {States.DRAW: 3000, States.TRAVEL: 10000} # mm/s^2
+        self.width = .7 # pen width in mm
+        self.offset: tuple[float, float] = (-40, 5) # pen offset from extruder
+
+        self.loadDelay = 20 # delay (seconds) printer waits while pen is loaded
+        self.shortTravelThreshold = .7 # travels below this distance will not lift the pen
+        self.avgTesselatedLineLength = .5 # average length per line on tesselated paths in mm
+        self.drawableArea = (215.9, 230) #TODO: implement bounds checking
+        self.showPenPos = True # if false, nozzle position will be shown in slicer
+
+        self.lastSpeed = 0
+        self.lastAccel = 0
+
+    # adds the contents of srcFile to the end of destFile
+    def fileAppend(self, srcFile: TextIO, destFile: TextIO, replace: dict[str, str] = {}):
+        for line in srcFile:
+            if "{" in line: # this saves time because the following check is much slower and most lines don't need it
+                for k, v in replace.items():
+                    line = line.replace("{" + k + "}", str(v))
+            destFile.write(line)
+
+    # adds a gcode line to the file with the specified arguments
+    # param "A" sets printer accel using m204 in seperate instruction
+    def addLine(self, args: dict[str, str | float], file: TextIO):
+        line = ""
+        lineIsValid = False # lines must contain x, y, or z arg (g2/3 are exempt)
+        for param, val in args.items():
+            # check if param is not already set to current value
+            val = float(val)
+            match param:
+                case "A":
+                    if val != float(self.lastAccel):
+                        file.write(f"M204 S{args["A"]}\n")
+                        self.lastAccel = val
+                    continue
+                case "F":
+                    if val == self.lastSpeed:
+                        continue
+                    self.lastSpeed = val
+                case "G":
+                    if val == 2 or val == 3:
+                        lineIsValid = True
+                case "X" | "Y" | "Z":
+                    if val == self.pos[param]:
+                        continue
+                    self.pos[param] = val
+                    lineIsValid = True
+
+            line += f"{param}{f"{val:.5f}".rstrip("0").rstrip(".")} "
+        if lineIsValid:
+            file.write(line.strip() + "\n")
+
+    # moves pen to the specified location
+    def penMove(self, pos: complex, file: TextIO, travel: bool = False):
+        distSquared = (pos.real - self.pos["X"]) ** 2 + (pos.imag - self.pos["Y"]) ** 2
+        if distSquared >= .000001: # moves shorter than .001 mm are probably caused by rounding errors
+            if travel:
+                if distSquared >= self.shortTravelThreshold ** 2: # long travel
+                    self.addLine({"G": "1", "Z": self.heights[States.TRAVEL], "F": self.speeds[States.TRAVEL], "A": self.accels[States.TRAVEL]}, file)
+                    self.addLine({"G": "1", "X": str(pos.real), "Y": str(pos.imag)}, file)
+                    self.addLine({"G": "1", "Z": self.heights[States.DRAW]}, file)
+                else: # short travel
+                    self.addLine({"G": "1", "X": str(pos.real), "Y": str(pos.imag), "F": self.speeds[States.DRAW], "A": self.accels[States.DRAW]}, file)
+            else: # draw moves
+                if self.pos["Z"] != self.heights[States.DRAW]:
+                    self.addLine({"G": "1", "Z": self.heights[States.DRAW]}, file)
+                self.addLine({"G": "1", "X": str(pos.real), "Y": str(pos.imag), "E": "1", "F": self.speeds[States.DRAW], "A": self.accels[States.DRAW]}, file)
+
+    def tesselate(self, segment: Segment): #TODO: adaptive tesselation
+        if isinstance(segment, Line):
+            return [segment.start, segment.end]
+        nSegments = math.ceil(segment.length() / self.avgTesselatedLineLength)
+        return [segment.point(t / nSegments) for t in range(nSegments+1)]
+
+    def addPath(self, object: PathObject, file: TextIO):
+        objectGeo: Path = object.geometry
+        for segment in objectGeo.segments:
+            if isinstance(segment, Line):
+                self.penMove(segment.start, file, True)
+                self.penMove(segment.end, file)
+            elif isinstance(segment, Arc):
+                self.penMove(segment.point(0), file, True)
+                if abs(abs(segment.u) - abs(segment.v)) <= .001:
+                    centerOffset = segment.center - segment.point(0)
+                    end = segment.point(1)
+                    params = {"G": "2", "X": end.real, "Y": end.imag, "I": centerOffset.real, "J": centerOffset.imag, "E": "1", "F": self.speeds[States.DRAW], "A": self.accels[States.DRAW]}
+                    if segment.sweep < 0:
+                        params["G"] = "3"
+                    self.addLine(params, file)
+                else:
+                    points = self.tesselate(segment)
+                    for point in points:
+                        self.penMove(point, file)
+            elif isinstance(segment, (QuadraticBezier, CubicBezier)):
+                self.penMove(segment.start, file, True)
+                points = self.tesselate(segment)
+                for point in points:
+                    self.penMove(point, file)
+            else:
+                print(f"Unknown path type {type(segment)}")
+
+    def createFile(self, geom: Document, fileOut: str, prefixFile: str = "", suffixFile: str = ""):
+        try:
+            with open(fileOut, "w") as destFile:
+                replace = {
+                    "TRAVEL_HEIGHT": self.heights[States.TRAVEL],
+                    "TRAVEL_SPEED": self.speeds[States.TRAVEL],
+                    "TRAVEL_ACCEL": self.accels[States.TRAVEL],
+                    "LINE_WIDTH": self.width,
+                    "LOAD_DELAY": self.loadDelay,
+                }
+                if self.showPenPos:
+                    replace["BED_EXCLUDE_AREA"] = f"0x0,256x0,256x256,{self.drawableArea[0]}x256,{self.drawableArea[0]}x{256-self.drawableArea[1]},0x{256-self.drawableArea[1]}"
+                    replace["EXTRUDER_OFFSET"] = f"{self.offset[0]}x{self.offset[1]}"
+                else:
+                    replace["BED_EXCLUDE_AREA"] = f"0x0,256x0,256x{256-self.drawableArea[1]},{256-self.drawableArea[0]}x{256-self.drawableArea[1]},{256-self.drawableArea[0]}x256,0x256"
+                    replace["EXTRUDER_OFFSET"] = "0x2" # 0x2 is the default offset
+
+                with open(prefixFile, "r") as srcFile:
+                    self.fileAppend(srcFile, destFile, replace)
+
+                for object in geom.objects:
+                    self.addPath(object, destFile)
+
+                with open(suffixFile, "r") as srcFile:
+                    self.fileAppend(srcFile, destFile, replace)
+            print("Post process completed sucessfully")
+        except PermissionError as e:
+            print(f'Could not open file "{e.filename}". Another program might be editing it.')
+        except FileNotFoundError as e:
+            print(f'Could not find file "{e.filename}".')
+
+#region parseSvg
+
 def readStyle(element: svgelements.SVGElement) -> Style:
     return Style(
         strokeWidth=getattr(element, "stroke_width", 1),
@@ -504,148 +632,27 @@ def parseSvgElement(node: svgelements.SVGElement, transform: Transform, document
     else:
         print(f"Ignored {type(node)} with name {node.id}")
 
-def parseSvg(svgPath: str) -> Document:
+def parseSvg(svgPath: str, dimensions: complex, offset: complex) -> Document:
     document = Document()
     svg = svgelements.SVG.parse(svgPath)
     transform = Transform()
     #TODO: add warning when document height and width don't match
     transform.scale(svg.viewbox.height / svg.height) # undo svgelements trying to scale document to viewport
-    transform.scale(drawableArea[1] / svg.height) # scale to print area
+    transform.scale(dimensions.imag / svg.height) # scale to print area
 
     for child in svg:
         parseSvgElement(child, transform, document)
     for path in document.objects:
         # transform to printer space
-        path.transform *= [1, 0, 0, -1, -penOffset[0], 256 + -penOffset[1]]
+        path.transform *= [1, 0, 0, -1, -offset.real, 256-offset.imag]
         path.applyTransformations()
     return document
 
-# adds the contents of srcFile to the end of destFile
-#TODO: add more flexibility to replace dict (mabye regex?)
-def fileAppend(srcFile: TextIO, destFile: TextIO, replace: dict[str, str] = {}):
-    for line in srcFile:
-        destFile.write(replace.get(line, line))
+#endregion parseSvg
 
-# adds a gcode line to the file with the specified arguments
-# param "A" sets printer accel using m204 in seperate instruction
-def addLine(args: dict[str, str | float], file: TextIO):
-    global lastPenSpeed, lastPenAccel
-    line = ""
-    lineIsValid = False # lines must contain x, y, or z arg (g2/3 are exempt)
-    for param, val in args.items():
-        # check if param is not already set to current value
-        val = float(val)
-        match param:
-            case "A":
-                if val != float(lastPenAccel):
-                    file.write(f"M204 S{args["A"]}\n")
-                    lastPenAccel = val
-                continue
-            case "F":
-                if val == lastPenSpeed:
-                    continue
-                lastPenSpeed = val
-            case "G":
-                if val == 2 or val == 3:
-                    lineIsValid = True
-            case "X":
-                if val == penPos[0]:
-                    continue
-                penPos[0] = val
-                lineIsValid = True
-            case "Y":
-                if val == penPos[1]:
-                    continue
-                penPos[1] = val
-                lineIsValid = True
-            case "Z":
-                if val == penPos[2]:
-                    continue
-                penPos[2] = val
-                lineIsValid = True
+plotter = Plotter()
 
-        line += f"{param}{f"{val:.5f}".rstrip("0").rstrip(".")} "
-    if lineIsValid:
-        file.write(line.strip() + "\n")
+document = parseSvg(fileIn, complex(plotter.drawableArea[0], plotter.drawableArea[1]), complex(plotter.offset[0], plotter.offset[1]))
+plotter.createFile(document, fileOut, prefixFile, suffixFile)
 
-# moves pen to the specified location
-def penMove(pos: complex, file: TextIO, travel: bool = False):
-    distSquared = (pos.real - penPos[0]) ** 2 + (pos.imag - penPos[1]) ** 2
-    if distSquared >= .000001: # moves shorter than .001 mm are probably caused by rounding errors
-        if travel:
-            if distSquared >= shortTravelThreshold ** 2: # long travel
-                addLine({"G": "1", "Z": penHeights[States.TRAVEL]}, file)
-                addLine({"G": "1", "X": str(pos.real), "Y": str(pos.imag), "F": penSpeeds[States.TRAVEL], "A": penAccels[States.TRAVEL]}, file)
-                addLine({"G": "1", "Z": penHeights[States.DRAW]}, file)
-            else: # short travel
-                addLine({"G": "1", "X": str(pos.real), "Y": str(pos.imag), "F": penSpeeds[States.DRAW], "A": penAccels[States.DRAW]}, file)
-        else: # draw moves
-            if penPos[2] != penHeights[States.DRAW]:
-                addLine({"G": "1", "Z": penHeights[States.DRAW]}, file)
-            addLine({"G": "1", "X": str(pos.real), "Y": str(pos.imag), "E": "1", "F": penSpeeds[States.DRAW], "A": penAccels[States.DRAW]}, file)
-
-def tesselate(segment: Segment): #TODO: adaptive tesselation
-    if isinstance(segment, Line):
-        return [segment.start, segment.end]
-    nSegments = math.ceil(segment.length() / maxTesselatedLineLength)
-    return [segment.point(t / nSegments) for t in range(nSegments+1)]
-
-def addPath(object: PathObject, file: TextIO):
-    objectGeo: Path = object.geometry
-    for segment in objectGeo.segments:
-        if isinstance(segment, Line):
-            penMove(segment.start, file, True)
-            penMove(segment.end, file)
-        elif isinstance(segment, Arc):
-            penMove(segment.point(0), file, True)
-            if abs(abs(segment.u) - abs(segment.v)) <= .001:
-                centerOffset = segment.center - segment.point(0)
-                end = segment.point(1)
-                params = {"G": "2", "X": end.real, "Y": end.imag, "I": centerOffset.real, "J": centerOffset.imag, "E": "1", "F": penSpeeds[States.DRAW], "A": penAccels[States.DRAW]}
-                if segment.sweep < 0:
-                    params["G"] = "3"
-                addLine(params, file)
-            else:
-                points = tesselate(segment)
-                for point in points:
-                    penMove(point, file)
-        elif isinstance(segment, (QuadraticBezier, CubicBezier)):
-            penMove(segment.start, file, True)
-            points = tesselate(segment)
-            for point in points:
-                    penMove(point, file)
-        else:
-            print(f"Unknown path type {type(segment)}")
-
-document = parseSvg(fileIn)
-
-try:
-    with open(fileOut, "w") as destFile:
-        with open(prefixFile, "r") as srcFile:
-            replace = {
-                "; MAX_Z_HEIGHT\n": f"; max_z_height: {penHeights[States.TRAVEL]}\n",
-                "LOAD_DELAY\n": f"G4 S{loadDelay}\n"
-            }
-            if showPenPos:
-                replace.update({
-                    "; BED_EXCLUDE_AREA\n": f"; bed_exclude_area = 0x0,256x0,256x256,{drawableArea[0]}x256,{drawableArea[0]}x{256-drawableArea[1]},0x{256-drawableArea[1]}\n",
-                    "; EXTRUDER_OFFSET\n": f"; extruder_offset = {penOffset[0]}x{penOffset[1]}\n",
-                })
-            else:
-                replace.update({
-                    "; BED_EXCLUDE_AREA\n": f"; bed_exclude_area = 0x0,256x0,256x{256-drawableArea[1]},{256-drawableArea[0]}x{256-drawableArea[1]},{256-drawableArea[0]}x256,0x256\n",
-                    "; EXTRUDER_OFFSET\n": f"; extruder_offset = 0x2\n", # 0x2 is the default offset
-                })
-            fileAppend(srcFile, destFile, replace)
-        with open(fileIn, "r") as srcFile:
-            destFile.write(f"; LINE_WIDTH: {penWidth}\n")
-            for object in document.objects:
-                addPath(object, destFile)
-        with open(suffixFile, "r") as srcFile:
-            fileAppend(srcFile, destFile, {"MOVE_TRAVEL_HEIGHT\n": f"G1 Z{penHeights[States.TRAVEL]}\n"})
-    print("Post process completed sucessfully")
-except PermissionError as e:
-    print(f'Could not open file "{e.filename}". Another program might be editing it.')
-except FileNotFoundError as e:
-    print(f'Could not find file "{e.filename}".')
 input() # wait for user to press enter before closing window
