@@ -154,7 +154,7 @@ class Segment(ABC):
 
     @abstractmethod
     def point(self, t: float) -> complex:
-        """Return the point at t"""
+        """Return the point at t (0 <= t <= 1)"""
 
     @abstractmethod
     def applyTransform(self, t: Transform):
@@ -165,8 +165,24 @@ class Segment(ABC):
         """Reverse the segment direction"""
 
     @abstractmethod
+    def derivative(self, t: float) -> complex:
+        """Return the derivative at point t (0 <= t <= 1)"""
+
+    @abstractmethod
+    def extrema(self) -> list[float]:
+        """Return the x and y extrema of a segment"""
+
+    # return (xmin, ymin, xmax, ymax)
     def bounds(self) -> tuple[float, float, float, float]:
-        """Return (xmin, ymin, xmax, ymax)"""
+        candidates: list[float] = [0, 1] # start/end of segment
+        candidates.extend(self.extrema())
+
+        pts = [self.point(t) for t in candidates]
+
+        xs = [p.real for p in pts]
+        ys = [p.imag for p in pts]
+
+        return (min(xs), min(ys), max(xs), max(ys))
 
 @dataclass
 class Line(Segment):
@@ -175,7 +191,7 @@ class Line(Segment):
 
     def length(self) -> float:
         d = self.start - self.end
-        return math.sqrt(d.real**2 + d.imag**2)
+        return math.hypot(d.real, d.imag)
 
     def point(self, t: float) -> complex:
         return t * (self.end-self.start) + self.start
@@ -187,12 +203,13 @@ class Line(Segment):
     def reverse(self):
         self.end, self.start = self.start, self.end
 
-    def bounds(self) -> tuple[float, float, float, float]:
-        xmin = min(self.start.real, self.end.real)
-        xmax = max(self.start.real, self.end.real)
-        ymin = min(self.start.imag, self.end.imag)
-        ymax = max(self.start.imag, self.end.imag)
-        return (xmin, ymin, xmax, ymax)
+    def derivative(self, t: float) -> complex:
+        # line derivative is constant, so t is irrelavent
+        return self.end - self.start
+
+    def extrema(self) -> list[float]:
+        # lines have no extrema
+        return []
 
 @dataclass
 class Arc(Segment):
@@ -217,8 +234,13 @@ class Arc(Segment):
     def _pointAtAngle(self, theta: float) -> complex:
         return self.center + self.u*math.cos(theta) + self.v*math.sin(theta)
 
+    def _thetaToT(self, theta: float) -> float:
+        return (self.t0-theta) / self.sweep
+
     def length(self) -> float:
-        length, _ = quad(self._speed, self.t0, self.t0 + self.sweep)
+        def speed(t):
+            return abs(self.derivative(t))
+        length, _ = quad(speed, 0, 1)
         return abs(length)
 
     def point(self, t: float) -> complex:
@@ -234,22 +256,26 @@ class Arc(Segment):
         self.t0 += self.sweep
         self.sweep = -self.sweep
 
-    def bounds(self) -> tuple[float, float, float, float]:
-        pts = [self.point(0), self.point(1)]
-        theta = math.atan2(self.v.real, self.u.real)
-        if self._containsAngle(theta):
-            pts.append(self._pointAtAngle(theta))
-        if self._containsAngle(theta + math.pi):
-            pts.append(self._pointAtAngle(theta + math.pi))
-        theta = math.atan2(self.v.real, self.u.real)
-        if self._containsAngle(theta):
-            pts.append(self._pointAtAngle(theta))
-        if self._containsAngle(theta + math.pi):
-            pts.append(self._pointAtAngle(theta + math.pi))
+    def derivative(self, t: float) -> complex:
+        theta = self.t0 + t*self.sweep
+        return self.derivativeFromTheta(theta) * self.sweep
 
-        xs = [p.real for p in pts]
-        ys = [p.imag for p in pts]
-        return (min(xs), min(ys), max(xs), max(ys))
+    def derivativeFromTheta(self, theta: float) -> complex:
+        return -self.u*math.sin(theta) + self.v*math.cos(theta)
+
+    def extrema(self) -> list[float]:
+        extrema = []
+        theta = math.atan2(self.v.real, self.u.real)
+        if self._containsAngle(theta):
+            extrema.append(self._thetaToT(theta))
+        if self._containsAngle(theta + math.pi):
+            extrema.append(self._thetaToT(theta + math.pi))
+        theta = math.atan2(self.v.imag, self.u.imag)
+        if self._containsAngle(theta):
+            extrema.append(self._thetaToT(theta))
+        if self._containsAngle(theta + math.pi):
+            extrema.append(self._thetaToT(theta + math.pi))
+        return extrema
 
 @dataclass
 class QuadraticBezier(Segment):
@@ -257,15 +283,21 @@ class QuadraticBezier(Segment):
     p1: complex = 0
     end: complex = 0
 
-    def _speed(self, t: float) -> complex:
-        d = (
-            2 * (1-t) * (self.p1-self.start) +
-            2 * t * (self.end-self.p1)
-        )
-        return math.hypot(d.real, d.imag)
+    def _axisExtrema(self, p0: float, p1: float, p2: float) -> list[float]:
+        denom = p0 - 2*p1 + p2
+        if abs(denom) < 1e-12:
+            return []
+
+        t = (p0-p1) / denom
+        if 0 <= t <= 1:
+            return [t]
+
+        return []
 
     def length(self) -> float:
-        length, _ = quad(self._speed, 0, 1)
+        def speed(t):
+            return abs(self.derivative(t))
+        length, _ = quad(speed, 0, 1)
         return length
 
     def point(self, t: float) -> complex:
@@ -283,8 +315,16 @@ class QuadraticBezier(Segment):
     def reverse(self):
         self.start, self.end = self.end, self.start
 
-    def bounds(self) -> tuple[float, float, float, float]: #TODO
-        return (0, 0, 0, 0)
+    def derivative(self, t: float) -> complex:
+        return (
+            2 * (1-t) * (self.p1-self.start) +
+            2 * t * (self.end-self.p1)
+        )
+
+    def extrema(self) -> list[float]:
+        ts = self._axisExtrema(self.start.real, self.p1.real, self.end.real)
+        ts += self._axisExtrema(self.start.imag, self.p1.imag, self.end.imag)
+        return ts
 
 @dataclass
 class CubicBezier(Segment):
@@ -293,17 +333,15 @@ class CubicBezier(Segment):
     p2: complex = 0
     end: complex = 0
 
-    def _speed(self, t: float) -> complex:
-        d = (
-            3 * (1-t) ** 2 * (self.p1-self.start) +
-            6 * (1-t) * t * (self.p2-self.p1) +
-            3 * t**2 * (self.end-self.p2)
-        )
-        return math.hypot(d.real, d.imag)
-
     def length(self) -> float:
-        length, _ = quad(self._speed, 0, 1)
+        def speed(t):
+            return abs(self.derivative(t))
+        length, _ = quad(speed, 0, 1)
         return length
+
+    def _axisExtrema(self, a: float, b: float, c: float) -> list[float]:
+        
+        return []
 
     def point(self, t: float) -> complex:
         return (
@@ -323,8 +361,21 @@ class CubicBezier(Segment):
         self.start, self.end = self.end, self.start
         self.p1, self.p2 = self.p2, self.p1
 
-    def bounds(self) -> tuple[float, float, float, float]: #TODO
-        return (0, 0, 0, 0)
+    def derivative(self, t: float) -> complex:
+        return (
+            3 * (1-t) ** 2 * (self.p1-self.start) +
+            6 * (1-t) * t * (self.p2-self.p1) +
+            3 * t**2 * (self.end-self.p2)
+        )
+
+    def extrema(self) -> list[float]:
+        a = -self.start + 3*self.p1 - 3*self.p2 + self.end
+        b = 3*self.start - 6*self.p1 + 3*self.p2
+        c = -3*self.start + 3*self.p1
+
+        ts = self._axisExtrema(3*a.real, 2*b.real, c.real)
+        ts += self._axisExtrema(3*a.imag, 2*b.imag, c.imag)
+        return ts
 
 # stores a list of segments
 @dataclass
@@ -470,7 +521,7 @@ def parseSvg(svgPath: str) -> Document:
     return document
 
 # adds the contents of srcFile to the end of destFile
-#TODO: add more flexibility to replace dict (mabye regex?) 
+#TODO: add more flexibility to replace dict (mabye regex?)
 def fileAppend(srcFile: TextIO, destFile: TextIO, replace: dict[str, str] = {}):
     for line in srcFile:
         destFile.write(replace.get(line, line))
