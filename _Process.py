@@ -6,9 +6,12 @@ from dataclasses import dataclass, field
 from scipy.integrate import quad
 import svgelements
 
-class States(Enum):
+class State(Enum):
     DRAW = auto()
     TRAVEL = auto()
+    _SEGMENT_BOUNDS = auto()
+    _PATH_BOUNDS = auto()
+    _DOCUMENT_BOUNDS = auto()
 
 # plot settings
 #TODO: move settings to json
@@ -166,7 +169,9 @@ class Segment(ABC):
         xs = [p.real for p in pts]
         ys = [p.imag for p in pts]
 
-        return (min(xs), min(ys), max(xs), max(ys))
+        temp = (min(xs), min(ys), max(xs), max(ys))
+
+        return (max(temp[0], -256), max(temp[1], -256), min(temp[2], 512), min(temp[3], 512))
 
 @dataclass
 class Line(Segment):
@@ -203,23 +208,20 @@ class Arc(Segment):
     t0: float = 0
     sweep: float = 2*math.pi # sweep is between -2pi (ccw) and 2pi (cw)
 
-    def _speed(self, theta: float) -> float:
-        dx = -self.u.real*math.sin(theta) + self.v.real*math.cos(theta)
-        dy = -self.u.imag*math.sin(theta) + self.v.imag*math.cos(theta)
-        return math.hypot(dx, dy)
-
     def _containsAngle(self, theta: float) -> bool:
-        if self.t0 <= theta < self.t0 + self.sweep:
-            return True
-        elif self.t0 + self.sweep <= theta <= self.t0:
-            return True
-        return False
+        return self._thetaToT(theta) is not None
 
     def _pointAtAngle(self, theta: float) -> complex:
         return self.center + self.u*math.cos(theta) + self.v*math.sin(theta)
 
-    def _thetaToT(self, theta: float) -> float:
-        return (self.t0-theta) / self.sweep
+    def _thetaToT(self, theta: float) -> float | None:
+        for k in range(-2, 3):
+            candidate = theta + k*math.tau
+            t = (candidate-self.t0) / self.sweep
+
+            if 0 <= t <= 1:
+                return t
+        return None
 
     def length(self) -> float:
         def speed(t):
@@ -249,16 +251,16 @@ class Arc(Segment):
 
     def extrema(self) -> list[float]:
         extrema = []
-        theta = math.atan2(self.v.real, self.u.real)
-        if self._containsAngle(theta):
-            extrema.append(self._thetaToT(theta))
-        if self._containsAngle(theta + math.pi):
-            extrema.append(self._thetaToT(theta + math.pi))
-        theta = math.atan2(self.v.imag, self.u.imag)
-        if self._containsAngle(theta):
-            extrema.append(self._thetaToT(theta))
-        if self._containsAngle(theta + math.pi):
-            extrema.append(self._thetaToT(theta + math.pi))
+
+        for theta in (
+            math.atan2(self.v.real, self.u.real),
+            math.atan2(self.v.real, self.u.real) + math.pi,
+            math.atan2(self.v.imag, self.u.imag),
+            math.atan2(self.v.imag, self.u.imag) + math.pi
+        ):
+            t = self._thetaToT(theta)
+            if t is not None:
+                extrema.append(t)
         return extrema
 
 @dataclass
@@ -273,7 +275,7 @@ class QuadraticBezier(Segment):
             return []
 
         t = (p0-p1) / denom
-        if 0 <= t <= 1:
+        if 0 < t < 1:
             return [t]
 
         return []
@@ -324,12 +326,21 @@ class CubicBezier(Segment):
         return length
 
     def _axisExtrema(self, a: float, b: float, c: float) -> list[float]:
+        if abs(a) < 1e-12: # prevent division by 0
+            return []
         disc = b*b - 4*a*c
+        ts = []
         if disc >= 0:
             s = math.sqrt(disc)
-            t1 = (-b+s) / 2*a
-            t2 = (-b-s) / 2*a
-        return [t1, t2]
+
+            t1 = (-b+s) / (2*a)
+            if 0 < t1 < 1:
+                ts.append(t1)
+
+            t2 = (-b-s) / (2*a)
+            if 0 < t2 < 1:
+                ts.append(t2)
+        return ts
 
     def point(self, t: float) -> complex:
         return (
@@ -422,15 +433,23 @@ class Document:
         if obj.id is not None:
             self.id[obj.id] = obj
 
+    def bounds(self) -> tuple[float, float, float, float]:
+        bounds = (math.inf, math.inf, -math.inf, -math.inf)
+        for object in self.objects:
+            segmentBounds = object.geometry.bounds()
+            bounds = (min(bounds[0], segmentBounds[0]), min(bounds[1], segmentBounds[1]), max(bounds[2], segmentBounds[2]), max(bounds[3], segmentBounds[3]))
+        return bounds
+
 #endregion shapeDefs
 
 # handles gcode creation and I/O
 class Plotter:
     def __init__(self):
         self.pos: dict[str, float] = {"X": 128, "Y": 128, "Z": 10} # initial pen position
-        self.heights = {States.DRAW: 1, States.TRAVEL: 5} # pen heights in mm
-        self.speeds = {States.DRAW: 1800, States.TRAVEL: 6000} # mm/min
-        self.accels = {States.DRAW: 3000, States.TRAVEL: 10000} # mm/s^2
+        self.heights = {State.DRAW: 1, State.TRAVEL: 5, State._SEGMENT_BOUNDS: 2, State._PATH_BOUNDS: 3, State._DOCUMENT_BOUNDS: 4} # pen heights in mm
+        self.speeds = {State.DRAW: 1800, State.TRAVEL: 6000} # mm/min
+        self.accels = {State.DRAW: 3000, State.TRAVEL: 10000} # mm/s^2
+        self.lineTypes = {State.DRAW: "Outer wall", State._SEGMENT_BOUNDS: "Support transition", State._PATH_BOUNDS: "Support interface", State._DOCUMENT_BOUNDS: "Support"}
         self.width = .7 # pen width in mm
         self.offset: tuple[float, float] = (-40, 5) # pen offset from extruder
 
@@ -440,8 +459,20 @@ class Plotter:
         self.drawableArea = (215.9, 230) #TODO: implement bounds checking
         self.showPenPos = True # if false, nozzle position will be shown in slicer
 
+        self.showBB = False
+
+        self.lastMoveType = "Custom"
         self.lastSpeed = 0
         self.lastAccel = 0
+
+    def _moveRect(self, bounds: tuple[float, float, float, float], file: TextIO, lineType: State | None = None):
+        edges: tuple[complex, complex, complex, complex] = (bounds[0], bounds[1]*1j, bounds[2], bounds[3]*1j)
+
+        self.penMove(edges[0]+edges[1], file, True)
+        self.penMove(edges[0]+edges[3], file, False, lineType)
+        self.penMove(edges[2]+edges[3], file, False, lineType)
+        self.penMove(edges[2]+edges[1], file, False, lineType)
+        self.penMove(edges[0]+edges[1], file, False, lineType)
 
     # adds the contents of srcFile to the end of destFile
     def fileAppend(self, srcFile: TextIO, destFile: TextIO, replace: dict[str, str] = {}):
@@ -453,17 +484,30 @@ class Plotter:
 
     # adds a gcode line to the file with the specified arguments
     # param "A" sets printer accel using m204 in seperate instruction
-    def addLine(self, args: dict[str, str | float], file: TextIO):
+    def addLine(self, args: dict[str, str | float | None], file: TextIO, lineType: State | None = None):
+        if lineType:
+            args["F"] = self.speeds.get(lineType)
+            args["accel"] = self.accels.get(lineType)
+            args["type"] = self.lineTypes.get(lineType)
+
         line = ""
         lineIsValid = False # lines must contain x, y, or z arg (g2/3 are exempt)
         for param, val in args.items():
+            if not val:
+                continue
             # check if param is not already set to current value
-            val = float(val)
+            if param != "type":
+                val = float(val)
             match param:
-                case "A":
+                case "accel":
                     if val != float(self.lastAccel):
-                        file.write(f"M204 S{args["A"]}\n")
+                        file.write(f"M204 S{val}\n")
                         self.lastAccel = val
+                    continue
+                case "type":
+                    if val != self.lastMoveType and "E" in args:
+                        file.write(f"; FEATURE: {val}\n")
+                        self.lastMoveType = val
                     continue
                 case "F":
                     if val == self.lastSpeed:
@@ -475,7 +519,7 @@ class Plotter:
                 case "X" | "Y" | "Z":
                     if val == self.pos[param]:
                         continue
-                    self.pos[param] = val
+                    self.pos[param] = val # type: ignore
                     lineIsValid = True
 
             line += f"{param}{f"{val:.5f}".rstrip("0").rstrip(".")} "
@@ -483,20 +527,20 @@ class Plotter:
             file.write(line.strip() + "\n")
 
     # moves pen to the specified location
-    def penMove(self, pos: complex, file: TextIO, travel: bool = False):
+    def penMove(self, pos: complex, file: TextIO, travel: bool = False, lineType: State | None = None):
         distSquared = (pos.real - self.pos["X"]) ** 2 + (pos.imag - self.pos["Y"]) ** 2
         if distSquared >= .000001: # moves shorter than .001 mm are probably caused by rounding errors
             if travel:
                 if distSquared >= self.shortTravelThreshold ** 2: # long travel
-                    self.addLine({"G": "1", "Z": self.heights[States.TRAVEL], "F": self.speeds[States.TRAVEL], "A": self.accels[States.TRAVEL]}, file)
+                    self.addLine({"G": "1", "Z": self.heights[State.TRAVEL]}, file, State.TRAVEL)
                     self.addLine({"G": "1", "X": str(pos.real), "Y": str(pos.imag)}, file)
-                    self.addLine({"G": "1", "Z": self.heights[States.DRAW]}, file)
+                    self.addLine({"G": "1", "Z": self.heights[State.DRAW]}, file)
                 else: # short travel
-                    self.addLine({"G": "1", "X": str(pos.real), "Y": str(pos.imag), "F": self.speeds[States.DRAW], "A": self.accels[States.DRAW]}, file)
+                    self.addLine({"G": "1", "X": str(pos.real), "Y": str(pos.imag)}, file, State.DRAW)
             else: # draw moves
-                if self.pos["Z"] != self.heights[States.DRAW]:
-                    self.addLine({"G": "1", "Z": self.heights[States.DRAW]}, file)
-                self.addLine({"G": "1", "X": str(pos.real), "Y": str(pos.imag), "E": "1", "F": self.speeds[States.DRAW], "A": self.accels[States.DRAW]}, file)
+                if self.pos["Z"] != self.heights[lineType or State.DRAW]:
+                    self.addLine({"G": "1", "Z": self.heights[lineType or State.DRAW]}, file)
+                self.addLine({"G": "1", "X": str(pos.real), "Y": str(pos.imag), "E": "1"}, file, lineType or State.DRAW)
 
     def tesselate(self, segment: Segment): #TODO: adaptive tesselation
         if isinstance(segment, Line):
@@ -515,10 +559,10 @@ class Plotter:
                 if abs(abs(segment.u) - abs(segment.v)) <= .001:
                     centerOffset = segment.center - segment.point(0)
                     end = segment.point(1)
-                    params = {"G": "2", "X": end.real, "Y": end.imag, "I": centerOffset.real, "J": centerOffset.imag, "E": "1", "F": self.speeds[States.DRAW], "A": self.accels[States.DRAW]}
+                    params = {"G": "2", "X": end.real, "Y": end.imag, "I": centerOffset.real, "J": centerOffset.imag, "E": "1"}
                     if segment.sweep < 0:
                         params["G"] = "3"
-                    self.addLine(params, file)
+                    self.addLine(params, file, State.DRAW)
                 else:
                     points = self.tesselate(segment)
                     for point in points:
@@ -530,14 +574,18 @@ class Plotter:
                     self.penMove(point, file)
             else:
                 print(f"Unknown path type {type(segment)}")
+            if self.showBB:
+                self._moveRect(segment.bounds(), file, State._SEGMENT_BOUNDS)
+        if self.showBB:
+            self._moveRect(objectGeo.bounds(), file, State._PATH_BOUNDS)
 
     def createFile(self, geom: Document, fileOut: str, prefixFile: str = "", suffixFile: str = ""):
         try:
             with open(fileOut, "w") as destFile:
                 replace = {
-                    "TRAVEL_HEIGHT": self.heights[States.TRAVEL],
-                    "TRAVEL_SPEED": self.speeds[States.TRAVEL],
-                    "TRAVEL_ACCEL": self.accels[States.TRAVEL],
+                    "TRAVEL_HEIGHT": self.heights[State.TRAVEL],
+                    "TRAVEL_SPEED": self.speeds[State.TRAVEL],
+                    "TRAVEL_ACCEL": self.accels[State.TRAVEL],
                     "LINE_WIDTH": self.width,
                     "LOAD_DELAY": self.loadDelay,
                 }
@@ -553,6 +601,8 @@ class Plotter:
 
                 for object in geom.objects:
                     self.addPath(object, destFile)
+                if self.showBB:
+                    self._moveRect(geom.bounds(), destFile, State._DOCUMENT_BOUNDS)
 
                 with open(suffixFile, "r") as srcFile:
                     self.fileAppend(srcFile, destFile, replace)
