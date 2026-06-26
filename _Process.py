@@ -611,6 +611,16 @@ def parseSvgElement(node: svgelements.SVGElement, transform: Transform, document
             elif isinstance(part, svgelements.Line):
                 temp += Line(current, part.end)
                 current = part.end
+            elif isinstance(part, svgelements.Arc):
+                u = part.prx - part.center # type: ignore
+                v = part.pry - part.center # type: ignore
+                r = part.start - part.center
+
+                det = u.real*v.imag - u.imag*v.real # type: ignore
+                alpha = (r.real*v.imag - r.imag*v.real) / det # type: ignore
+                beta = (u.real*r.imag - u.imag*r.real) / det # type: ignore
+
+                temp += Arc(part.center, u, v, math.atan2(beta, alpha), part.sweep) # type: ignore
             elif isinstance(part, svgelements.QuadraticBezier):
                 temp += QuadraticBezier(current, part.control, part.end)
                 current = part.end
