@@ -171,7 +171,8 @@ class Segment(ABC):
 
         temp = (min(xs), min(ys), max(xs), max(ys))
 
-        return (max(temp[0], -256), max(temp[1], -256), min(temp[2], 512), min(temp[3], 512))
+        # bambu studio renderer breaks if very large cordinates are given
+        return (max(temp[0], -5000), max(temp[1], -5000), min(temp[2], 5256), min(temp[3], 5256))
 
 @dataclass
 class Line(Segment):
@@ -540,7 +541,7 @@ class Plotter:
             else: # draw moves
                 if self.pos["Z"] != self.heights[lineType or State.DRAW]:
                     self.addLine({"G": "1", "Z": self.heights[lineType or State.DRAW]}, file)
-                self.addLine({"G": "1", "X": str(pos.real), "Y": str(pos.imag), "E": "1"}, file, lineType or State.DRAW)
+                self.addLine({"G": "1", "X": str(pos.real), "Y": str(pos.imag), "E": math.hypot(pos.real-self.pos["X"], pos.imag-self.pos["Y"])}, file, lineType or State.DRAW)
 
     def tesselate(self, segment: Segment): #TODO: adaptive tesselation
         if isinstance(segment, Line):
@@ -559,7 +560,7 @@ class Plotter:
                 if abs(abs(segment.u) - abs(segment.v)) <= .001:
                     centerOffset = segment.center - segment.point(0)
                     end = segment.point(1)
-                    params = {"G": "2", "X": end.real, "Y": end.imag, "I": centerOffset.real, "J": centerOffset.imag, "E": "1"}
+                    params = {"G": "2", "X": end.real, "Y": end.imag, "I": centerOffset.real, "J": centerOffset.imag, "E": segment.length()}
                     if segment.sweep < 0:
                         params["G"] = "3"
                     self.addLine(params, file, State.DRAW)
