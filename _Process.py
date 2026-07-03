@@ -750,8 +750,13 @@ def parseSvg(svgPath: str, dimensions: complex, offset: complex) -> Document:
     svg = svgelements.SVG.parse(svgPath)
     transform = Transform()
     #TODO: add warning when document height and width don't match
+    # FIXME: scaling logic can be weird sometimes
     transform.scale(svg.viewbox.height / svg.height) # undo svgelements trying to scale document to viewport
-    transform.scale(dimensions.imag / svg.height) # scale to print area
+    
+    # this line can cause unexpected behavior sometimes
+    # mabye ask user if they want to scale drawing?
+    #transform.scale(dimensions.imag / svg.height) # scale to print area
+    transform.scale(svg.viewbox.height / svg.height) # temporary
 
     for child in svg:
         parseSvgElement(child, transform, document)
