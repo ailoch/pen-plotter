@@ -463,6 +463,8 @@ class PlotSettings:
     lineTypes: dict[State, str] = field(default_factory=dict)
     loadDelay: float = 20
     showPenPos: bool = True
+    style: str = "line type"
+    styleLineOrder: list[str] = field(default_factory=list)
 
     # debug settings
     showBoundingBoxes: bool = False
@@ -492,12 +494,18 @@ class PlotSettings:
                                     case "_documentBounds":
                                         temp[State._DOCUMENT_BOUNDS] = v
                                     case _:
-                                        print(f"Unknown move type {k} (reading {sectionName}.{settingName})")
+                                        print(f"Unknown move type '{k}' (reading {sectionName}.{settingName})")
                             setattr(self, settingName, temp)
                         case "penOffset" | "plateSize" | "drawableArea":
                             setattr(self, settingName, tuple(setting))
                         case "startPos":
                             self.startPos = dict(zip(("X", "Y", "Z"), setting))
+                        case "style":
+                            allowedStyles = ("line type", "instruction", "segment")
+                            if setting.lower() in allowedStyles:
+                                self.style = setting.lower()
+                            else:
+                                print(f"Unknown style '{setting}' (reading {sectionName}.style)")
                         case _:
                             setattr(self, settingName, setting)
                 else:
@@ -558,9 +566,25 @@ class Plotter:
                         self.lastAccel = val
                     continue
                 case "type":
-                    if val != self.lastMoveType and "E" in args:
-                        file.write(f"; FEATURE: {val}\n")
-                        self.lastMoveType = val
+                    feature = ""
+                    lineOrder = self.settings.styleLineOrder
+                    match self.settings.style:
+                        case "line type":
+                            feature = val
+                        case "instruction":
+                            if 1 <= int(args["G"]) <= 3: # type: ignore
+                                feature = lineOrder[int(args["G"]) - 1] # type: ignore
+                            else:
+                                feature = lineOrder[len(lineOrder) - 1]
+                        case "segment":
+                            if self.lastMoveType in lineOrder:
+                                idx = (lineOrder.index(self.lastMoveType) + 1) % (len(lineOrder) - 1)
+                                feature = lineOrder[idx]
+                            else:
+                                feature = lineOrder[0]
+                    if feature != self.lastMoveType and "E" in args:
+                        file.write(f"; FEATURE: {feature}\n")
+                        self.lastMoveType = feature
                     continue
                 case "F":
                     if val == self.lastSpeed:

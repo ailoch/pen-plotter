@@ -25,7 +25,16 @@
         "penWidth": 0.7, // pen width in mm
         "lineTypes": {"draw": "Outer wall", "_segmentBounds": "Support transition", "_pathBounds": "Support interface", "_documentBounds": "Support"},
         "loadDelay": 20, // wait this long for user to load pen
-        "showPenPos": true // if false, nozzle position will be shown in slicer
+        "showPenPos": true, // if false, nozzle position will be shown in slicer
+
+        "style": "line type", // options are "line type", "instruction", and "segment"
+          // line type: shows role of lines in slicer view (styleLineOrder is ignored)
+          // instruction: shows g1/g2/g3 instructions with different colors
+          //  colors are set by the 1st 3 items in styleLineOrder
+          //  other instructions will have their color as the last item in styleLineOrder
+          // segment: shows each line segment as a different color
+          //  colors are set by the items in styleLineOrder (last item is ignored)
+        "styleLineOrder": ["Sparse infill", "Support interface", "Overhang wall", "Internal solid infill", "Gap infill"]
     },
 
     // debug settings
