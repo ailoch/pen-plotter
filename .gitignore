@@ -1,5 +1,5 @@
 *.gcode
 *.svg
 !testDrawing.svg
-!ーstartCode.gcode
-!ーendCode.gcode
+!Append/startCode.gcode
+!Append/endCode.gcode

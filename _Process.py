@@ -2,9 +2,9 @@ import math
 from abc import ABC, abstractmethod
 from enum import Enum, auto
 from typing import TextIO, Self
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from scipy.integrate import quad
-import svgelements
+import svgelements, commentjson
 
 class State(Enum):
     DRAW = auto()
@@ -14,11 +14,8 @@ class State(Enum):
     _DOCUMENT_BOUNDS = auto()
 
 # plot settings
-#TODO: move settings to json
 fileIn = "testDrawing.svg" # hardcoded to speed up testing, need to ask user later
 fileOut = "testDrawing.gcode"
-prefixFile = "ーstartCode.gcode"
-suffixFile = "ーendCode.gcode"
 
 #region shapeDefs
 
@@ -443,26 +440,81 @@ class Document:
 
 #endregion shapeDefs
 
+@dataclass
+class PlotSettings:
+    # machine settings
+    startPos: dict[str, float] = field(default_factory=lambda: {"X": 0, "Y": 0, "Z": 10})
+    penOffset: tuple[float, float] = (0, 0)
+    plateSize: tuple[float, float] = (150, 150)
+    drawableArea: tuple[float, float] = (150, 150)
+
+    # gcode settings
+    heights: dict[State, float] = field(default_factory=dict)
+    speeds: dict[State, float] = field(default_factory=dict)
+    accels: dict[State, float] = field(default_factory=dict)
+    shortTravelThreshold: float = .5
+    avgTesselatedLineLength: float = .5
+
+    prefixFile: str = ""
+    suffixFile: str = ""
+
+    # visualization settings
+    penWidth: float = .5
+    lineTypes: dict[State, str] = field(default_factory=dict)
+    loadDelay: float = 20
+    showPenPos: bool = True
+
+    # debug settings
+    showBoundingBoxes: bool = False
+
+    def initFromJson(self, path):
+        with open(path) as f:
+            data = commentjson.load(f)
+        allowed = {f.name for f in fields(PlotSettings)}
+
+        for sectionName, data in data.items():
+            for settingName, setting in data.items():
+                #TODO: check types of incoming objects
+                if settingName in allowed:
+                    match settingName: # some properties need special logic
+                        case "heights" | "speeds" | "accels" | "lineTypes":
+                            temp = {}
+                            for k, v in setting.items():
+                                match k:
+                                    case "draw":
+                                        temp[State.DRAW] = v
+                                    case "travel":
+                                        temp[State.TRAVEL] = v
+                                    case "_segmentBounds":
+                                        temp[State._SEGMENT_BOUNDS] = v
+                                    case "_pathBounds":
+                                        temp[State._PATH_BOUNDS] = v
+                                    case "_documentBounds":
+                                        temp[State._DOCUMENT_BOUNDS] = v
+                                    case _:
+                                        print(f"Unknown move type {k} (reading {sectionName}.{settingName})")
+                            setattr(self, settingName, temp)
+                        case "penOffset" | "plateSize" | "drawableArea":
+                            setattr(self, settingName, tuple(setting))
+                        case "startPos":
+                            self.startPos = dict(zip(("X", "Y", "Z"), setting))
+                        case _:
+                            setattr(self, settingName, setting)
+                else:
+                    print(f"Unknown setting {sectionName}.{settingName}")
+
+        print(f"Loaded settings from file '{path}'")
+
 # handles gcode creation and I/O
 class Plotter:
-    def __init__(self):
-        self.pos: dict[str, float] = {"X": 128, "Y": 128, "Z": 10} # initial pen position
-        self.heights = {State.DRAW: 1, State.TRAVEL: 5, State._SEGMENT_BOUNDS: 2, State._PATH_BOUNDS: 3, State._DOCUMENT_BOUNDS: 4} # pen heights in mm
-        self.speeds = {State.DRAW: 1800, State.TRAVEL: 6000} # mm/min
-        self.accels = {State.DRAW: 3000, State.TRAVEL: 10000} # mm/s^2
-        self.lineTypes = {State.DRAW: "Outer wall", State._SEGMENT_BOUNDS: "Support transition", State._PATH_BOUNDS: "Support interface", State._DOCUMENT_BOUNDS: "Support"}
-        self.width = .7 # pen width in mm
-        self.offset: tuple[float, float] = (-40, 5) # pen offset from extruder
-
-        self.loadDelay = 20 # delay (seconds) printer waits while pen is loaded
-        self.shortTravelThreshold = .7 # travels below this distance will not lift the pen
-        self.avgTesselatedLineLength = .5 # average length per line on tesselated paths in mm
-        self.drawableArea = (215.9, 230) #TODO: implement bounds checking
-        self.showPenPos = True # if false, nozzle position will be shown in slicer
-
-        self.showBB = False
+    def __init__(self, settingsFile: str | None = None):
+        self.settings = PlotSettings()
+        if settingsFile:
+            self.settings.initFromJson(settingsFile)
+            #TODO: check if bounds fits within plate area
 
         self.lastMoveType = "Custom"
+        self.pos = self.settings.startPos
         self.lastSpeed = 0
         self.lastAccel = 0
 
@@ -476,7 +528,7 @@ class Plotter:
         self.penMove(edges[0]+edges[1], file, False, lineType)
 
     # adds the contents of srcFile to the end of destFile
-    def fileAppend(self, srcFile: TextIO, destFile: TextIO, replace: dict[str, str] = {}):
+    def fileAppend(self, srcFile: TextIO, destFile: TextIO, replace: dict[str, str | float] = {}):
         for line in srcFile:
             if "{" in line: # this saves time because the following check is much slower and most lines don't need it
                 for k, v in replace.items():
@@ -487,9 +539,9 @@ class Plotter:
     # param "A" sets printer accel using m204 in seperate instruction
     def addLine(self, args: dict[str, str | float | None], file: TextIO, lineType: State | None = None):
         if lineType:
-            args["F"] = self.speeds.get(lineType)
-            args["accel"] = self.accels.get(lineType)
-            args["type"] = self.lineTypes.get(lineType)
+            args["F"] = self.settings.speeds.get(lineType)
+            args["accel"] = self.settings.accels.get(lineType)
+            args["type"] = self.settings.lineTypes.get(lineType)
 
         line = ""
         lineIsValid = False # lines must contain x, y, or z arg (g2/3 are exempt)
@@ -532,21 +584,21 @@ class Plotter:
         distSquared = (pos.real - self.pos["X"]) ** 2 + (pos.imag - self.pos["Y"]) ** 2
         if distSquared >= .000001: # moves shorter than .001 mm are probably caused by rounding errors
             if travel:
-                if distSquared >= self.shortTravelThreshold ** 2: # long travel
-                    self.addLine({"G": "1", "Z": self.heights[State.TRAVEL]}, file, State.TRAVEL)
+                if distSquared >= self.settings.shortTravelThreshold ** 2: # long travel
+                    self.addLine({"G": "1", "Z": self.settings.heights[State.TRAVEL]}, file, State.TRAVEL)
                     self.addLine({"G": "1", "X": str(pos.real), "Y": str(pos.imag)}, file)
-                    self.addLine({"G": "1", "Z": self.heights[State.DRAW]}, file)
+                    self.addLine({"G": "1", "Z": self.settings.heights[State.DRAW]}, file)
                 else: # short travel
                     self.addLine({"G": "1", "X": str(pos.real), "Y": str(pos.imag)}, file, State.DRAW)
             else: # draw moves
-                if self.pos["Z"] != self.heights[lineType or State.DRAW]:
-                    self.addLine({"G": "1", "Z": self.heights[lineType or State.DRAW]}, file)
+                if self.pos["Z"] != self.settings.heights[lineType or State.DRAW]:
+                    self.addLine({"G": "1", "Z": self.settings.heights[lineType or State.DRAW]}, file)
                 self.addLine({"G": "1", "X": str(pos.real), "Y": str(pos.imag), "E": math.hypot(pos.real-self.pos["X"], pos.imag-self.pos["Y"])}, file, lineType or State.DRAW)
 
     def tesselate(self, segment: Segment): #TODO: adaptive tesselation
         if isinstance(segment, Line):
             return [segment.start, segment.end]
-        nSegments = math.ceil(segment.length() / self.avgTesselatedLineLength)
+        nSegments = math.ceil(segment.length() / self.settings.avgTesselatedLineLength)
         return [segment.point(t / nSegments) for t in range(nSegments+1)]
 
     def addPath(self, object: PathObject, file: TextIO):
@@ -575,37 +627,37 @@ class Plotter:
                     self.penMove(point, file)
             else:
                 print(f"Unknown path type {type(segment)}")
-            if self.showBB:
+            if self.settings.showBoundingBoxes:
                 self._moveRect(segment.bounds(), file, State._SEGMENT_BOUNDS)
-        if self.showBB:
+        if self.settings.showBoundingBoxes:
             self._moveRect(objectGeo.bounds(), file, State._PATH_BOUNDS)
 
-    def createFile(self, geom: Document, fileOut: str, prefixFile: str = "", suffixFile: str = ""):
+    def createFile(self, geom: Document, fileOut: str):
         try:
             with open(fileOut, "w") as destFile:
-                replace = {
-                    "TRAVEL_HEIGHT": self.heights[State.TRAVEL],
-                    "TRAVEL_SPEED": self.speeds[State.TRAVEL],
-                    "TRAVEL_ACCEL": self.accels[State.TRAVEL],
-                    "LINE_WIDTH": self.width,
-                    "LOAD_DELAY": self.loadDelay,
+                replace: dict[str, float | str] = {
+                    "TRAVEL_HEIGHT": self.settings.heights[State.TRAVEL],
+                    "TRAVEL_SPEED": self.settings.speeds[State.TRAVEL],
+                    "TRAVEL_ACCEL": self.settings.accels[State.TRAVEL],
+                    "LINE_WIDTH": self.settings.penWidth,
+                    "LOAD_DELAY": self.settings.loadDelay,
                 }
-                if self.showPenPos:
-                    replace["BED_EXCLUDE_AREA"] = f"0x0,256x0,256x256,{self.drawableArea[0]}x256,{self.drawableArea[0]}x{256-self.drawableArea[1]},0x{256-self.drawableArea[1]}"
-                    replace["EXTRUDER_OFFSET"] = f"{self.offset[0]}x{self.offset[1]}"
+                if self.settings.showPenPos:
+                    replace["BED_EXCLUDE_AREA"] = f"0x0,256x0,256x256,{self.settings.drawableArea[0]}x256,{self.settings.drawableArea[0]}x{256-self.settings.drawableArea[1]},0x{256-self.settings.drawableArea[1]}"
+                    replace["EXTRUDER_OFFSET"] = f"{self.settings.penOffset[0]}x{self.settings.penOffset[1]}"
                 else:
-                    replace["BED_EXCLUDE_AREA"] = f"0x0,256x0,256x{256-self.drawableArea[1]},{256-self.drawableArea[0]}x{256-self.drawableArea[1]},{256-self.drawableArea[0]}x256,0x256"
+                    replace["BED_EXCLUDE_AREA"] = f"0x0,256x0,256x{256-self.settings.drawableArea[1]},{256-self.settings.drawableArea[0]}x{256-self.settings.drawableArea[1]},{256-self.settings.drawableArea[0]}x256,0x256"
                     replace["EXTRUDER_OFFSET"] = "0x2" # 0x2 is the default offset
 
-                with open(prefixFile, "r") as srcFile:
+                with open(self.settings.prefixFile, "r") as srcFile:
                     self.fileAppend(srcFile, destFile, replace)
 
                 for object in geom.objects:
                     self.addPath(object, destFile)
-                if self.showBB:
+                if self.settings.showBoundingBoxes:
                     self._moveRect(geom.bounds(), destFile, State._DOCUMENT_BOUNDS)
 
-                with open(suffixFile, "r") as srcFile:
+                with open(self.settings.suffixFile, "r") as srcFile:
                     self.fileAppend(srcFile, destFile, replace)
             print("Post process completed sucessfully")
         except PermissionError as e:
@@ -711,9 +763,9 @@ def parseSvg(svgPath: str, dimensions: complex, offset: complex) -> Document:
 
 #endregion parseSvg
 
-plotter = Plotter()
+plotter = Plotter("settings.json")
 
-document = parseSvg(fileIn, complex(plotter.drawableArea[0], plotter.drawableArea[1]), complex(plotter.offset[0], plotter.offset[1]))
-plotter.createFile(document, fileOut, prefixFile, suffixFile)
+document = parseSvg(fileIn, complex(plotter.settings.drawableArea[0], plotter.settings.drawableArea[1]), complex(plotter.settings.penOffset[0], plotter.settings.penOffset[1]))
+plotter.createFile(document, fileOut)
 
 input() # wait for user to press enter before closing window
