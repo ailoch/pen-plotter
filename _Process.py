@@ -385,6 +385,28 @@ class Path:
             len += segment.length()
         return len
 
+    def start(self) -> complex:
+        return self.segments[0].point(0)
+
+    def end(self) -> complex:
+        return self.segments[-1].point(1)
+
+    def isClosed(self, tolerance: float = 1e-6) -> bool:
+        return abs(self.start() - self.end()) < tolerance
+
+    # returns the points where segments of the path meet
+    def vertices(self) -> list[complex]:
+        verts = [segment.point(0) for segment in self.segments]
+        if not self.isClosed(): # closed paths have the same start and end
+            verts.append(self.end())
+        return verts
+
+    # re-splits a closed path so segments[index] becomes the first segment drawn
+    def rotateTo(self, index: int):
+        if not self.isClosed():
+            raise ValueError("Path.rotateTo() only makes sense on a closed path")
+        self.segments = self.segments[index:] + self.segments[:index]
+
     def reverse(self):
         self.segments.reverse()
         for segment in self.segments:
@@ -465,6 +487,7 @@ class PlotSettings:
     showPenPos: bool = True
     style: str = "line type"
     styleLineOrder: list[str] = field(default_factory=list)
+    optimizePathOrder: bool = True
 
     # debug settings
     showBoundingBoxes: bool = False
@@ -544,7 +567,7 @@ class Plotter:
             destFile.write(line)
 
     # adds a gcode line to the file with the specified arguments
-    # param "A" sets printer accel using m204 in seperate instruction
+    # param "accel" sets printer accel using m204 in seperate instruction
     def addLine(self, args: dict[str, str | float | None], file: TextIO, lineType: State | None = None):
         if lineType:
             args["F"] = self.settings.speeds.get(lineType)
@@ -791,9 +814,112 @@ def parseSvg(svgPath: str, dimensions: complex, offset: complex) -> Document:
 
 #endregion parseSvg
 
+#region routing
+
+# reorders the paths in document.objects to minimise travel distance
+# open paths will be reversed as needed
+# closed paths will be entered/exited at any of their vertices
+# a stock TSP solver is not applicable here becuase paths can be altered
+# this converges in under a second with a few hundred objects
+def orderPaths(document: Document, startPos: complex = 0):
+    objects = document.objects
+    n = len(objects)
+    if n <= 1:
+        return
+
+    starts: list[complex] = []
+    ends: list[complex] = []
+    closed: list[bool] = []
+    vertices: list[list[complex]] = []
+    for obj in objects:
+        starts.append(obj.geometry.start())
+        ends.append(obj.geometry.end())
+        isClosed = obj.geometry.isClosed()
+        closed.append(isClosed)
+        vertices.append(obj.geometry.vertices() if isClosed else [])
+
+    rev = [False] * n # whether open path i is currently drawn end->start
+    anchor = [0] * n # for closed path i, index into vertices[i] of the chosen entry/exit point
+
+    def startPt(i: int) -> complex:
+        if closed[i]:
+            return vertices[i][anchor[i]]
+        return ends[i] if rev[i] else starts[i]
+
+    def endPt(i: int) -> complex:
+        if closed[i]:
+            return vertices[i][anchor[i]]
+        return starts[i] if rev[i] else ends[i]
+
+    # nearest-neighbor construction
+    remaining = set(range(n))
+    order: list[int] = []
+    current = startPos
+    while remaining:
+        def closestDist(i: int) -> float:
+            if closed[i]:
+                return min(abs(current-v) for v in vertices[i])
+            return min(abs(current-starts[i]), abs(current-ends[i]))
+        best = min(remaining, key=closestDist)
+        if closed[best]:
+            anchor[best] = min(range(len(vertices[best])), key=lambda k: abs(current-vertices[best][k]))
+        else:
+            rev[best] = abs(current-ends[best]) < abs(current-starts[best])
+        order.append(best)
+        current = endPt(best)
+        remaining.discard(best)
+
+    # 2-opt + anchor-optimization refinement, interleaved until neither helps anymore
+    improved = True
+    while improved:
+        improved = False
+
+        # 2-opt: try reversing every possible run of the tour
+        for i in range(n):
+            leftPrev = startPos if i == 0 else endPt(order[i-1])
+            for j in range(i, n):
+                oldLeft = abs(leftPrev - startPt(order[i]))
+                oldRight = 0.0 if j == n-1 else abs(endPt(order[j]) - startPt(order[j+1]))
+
+                newLeft = abs(leftPrev - endPt(order[j])) # order[j] reversed becomes the new start
+                newRight = 0.0 if j == n-1 else abs(startPt(order[i]) - startPt(order[j+1])) # order[i] reversed becomes the new end
+
+                if newLeft + newRight < oldLeft + oldRight - 1e-9:
+                    order[i:j+1] = reversed(order[i:j+1])
+                    for k in range(i, j+1):
+                        rev[order[k]] = not rev[order[k]]
+                    improved = True
+
+        # anchor optimization: for each closed path, try every vertex as the entry/exit point
+        for i in range(n):
+            objIdx = order[i]
+            if not closed[objIdx]:
+                continue
+            leftNeighbor = startPos if i == 0 else endPt(order[i-1])
+            rightNeighbor = None if i == n-1 else startPt(order[i+1])
+
+            def anchorCost(v: complex) -> float:
+                return abs(leftNeighbor-v) + (0.0 if rightNeighbor is None else abs(v-rightNeighbor))
+
+            bestK = min(range(len(vertices[objIdx])), key=lambda k: anchorCost(vertices[objIdx][k]))
+            if bestK != anchor[objIdx] and anchorCost(vertices[objIdx][bestK]) < anchorCost(vertices[objIdx][anchor[objIdx]]) - 1e-9:
+                anchor[objIdx] = bestK
+                improved = True
+
+    for i in range(n):
+        if closed[i]:
+            objects[i].geometry.rotateTo(anchor[i])
+        elif rev[i]:
+            objects[i].geometry.reverse()
+    document.objects = [objects[i] for i in order]
+
+#endregion routing
+
 plotter = Plotter("settings.json")
 
 document = parseSvg(fileIn, complex(plotter.settings.drawableArea[0], plotter.settings.drawableArea[1]), complex(plotter.settings.penOffset[0], plotter.settings.penOffset[1]))
+if plotter.settings.optimizePathOrder:
+    orderPaths(document, complex(plotter.pos["X"], plotter.pos["Y"]))
 plotter.createFile(document, fileOut)
 
 input() # wait for user to press enter before closing window

@@ -39,6 +39,7 @@
 
     // debug settings
     "debug": {
-        "showBoundingBoxes": false
+        "showBoundingBoxes": false,
+        "optimizePathOrder": true // if false, path order will be the same as in the input file
     }
 }

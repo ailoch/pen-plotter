@@ -11,12 +11,13 @@ plotter (the extruder holds a pen instead of printing filament).
 ```python
 plotter = Plotter("settings.json")
 document = parseSvg(fileIn, ...)
+orderPaths(document, ...)  # reorder for minimal pen-up travel
 plotter.createFile(document, fileOut)
 input()  # keeps the console window open
 ```
 
 `fileIn`/`fileOut` are hardcoded near the top of the file (`_Process.py:17-18`) —
-currently `test2.svg` -> `testDrawing.gcode`. Change these by hand to process a
+currently `testDrawing.svg` -> `testDrawing.gcode`. Change these by hand to process a
 different drawing (user wants to eventually prompt for these instead).
 
 ## Pipeline
@@ -29,25 +30,47 @@ different drawing (user wants to eventually prompt for these instead).
    - Applies the SVG's own transform stack via the custom `Transform` class, then a
      final transform to flip Y (SVG +Y is down, gcode/printer +Y is up) and offset
      for the pen's position relative to the nozzle.
-   - **Important `svgelements` gotcha (see "Fixed bugs" below):** `node.transform` is
-     the transform already cascaded from the document root down to that node, not a
-     local-only matrix — `parseSvgElement` must combine it with the constant
-     `dimensions`/unit-correction transform directly (`transform @ Transform(node.transform)`),
-     never accumulate it further through recursion, or nested groups' scale compounds
-     with every level of nesting.
+   - **Important `svgelements` gotcha:** `node.transform` is the transform already
+     cascaded from the document root down to that node, not a local-only matrix —
+     `parseSvgElement` must combine it with the constant `dimensions`/unit-correction
+     transform directly (`transform @ Transform(node.transform)`), never accumulate it
+     further through recursion, or nested groups' scale compounds with every level of
+     nesting.
    - Text, defs, and other non-geometry nodes are ignored with a printed warning.
 
 2. **Geometry model** (region "shapeDefs", `_Process.py:20-441`)
    - `Segment` (ABC) → `Line`, `Arc`, `QuadraticBezier`, `CubicBezier`. Each knows its
      own `length()`, `point(t)`, `derivative(t)`, `extrema()`, `bounds()`.
-   - `Path` = list of segments. `PathObject` = a `Path` + `Style` (stroke width/color,
+   - `Path` = list of segments, with `start()`/`end()`, `isClosed()` (start ≈ end
+     within a tolerance), `vertices()` (the point between every pair of consecutive
+     segments — i.e. every candidate place the pen could enter/exit without changing
+     the drawn shape; includes the final endpoint too for open paths), and
+     `rotateTo(index)` (re-splits a *closed* path so `segments[index]` is drawn
+     first — raises if the path isn't closed, since re-splitting an open path would
+     change its shape). `PathObject` = a `Path` + `Style` (stroke width/color,
      currently unused for output) + `Transform`.
    - `Document` = list of `PathObject`s plus an id→object lookup.
    - `Transform` is a hand-rolled 2D affine matrix (`[a,b,c,d,e,f]`, same convention as
      SVG's `matrix()`), supporting translate/scale/rotate/skew/flip and composition via
      `@`/`@=` (SVG-order) and `*`/`*=` (reverse order).
 
-3. **Gcode generation** (`Plotter` class, `_Process.py:517` region)
+3. **Path ordering / routing** (`orderPaths`, region "routing", called between
+   `parseSvg` and `plotter.createFile`)
+   - Reorders `document.objects` (and reverses/rotates individual paths) to
+     approximately minimize pen-up travel. This is TSP-like but not quite TSP: each
+     path can be drawn forwards or backwards for free (2 candidate anchor points via
+     `Path.reverse()`), and a *closed* path can additionally be entered/exited at any
+     of its vertices (`Path.rotateTo()`), since it ends where it starts.
+   - Solved with nearest-neighbor construction, then two interleaved local-search
+     refinement passes run to convergence: 2-opt (try reversing runs of the tour —
+     reversing a run also flips the draw direction of every open path in it, which
+     leaves the connections *within* the run unchanged, so only the two boundary
+     edges need comparing) and anchor optimization (for each closed path, try every
+     vertex against its current tour neighbors, keep the cheapest).
+   - Fast enough for the stated scale (200-300 objects, well under a second) without
+     needing an external TSP/routing library.
+
+4. **Gcode generation** (`Plotter` class, `_Process.py:517` region)
    - `addPath` walks each segment: lines are drawn directly; perfect-radius arcs
      become native `G2`/`G3` arcs; non-circular arcs and beziers are tessellated into
      line segments (`tesselate`, fixed segment length, not adaptive yet — see TODO).
