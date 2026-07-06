@@ -699,12 +699,12 @@ def readStyle(element: svgelements.SVGElement) -> Style:
         #fillColor=getattr(element, "fill", [0, 0, 0])
     )
 
-def parseSvgElement(node: svgelements.SVGElement, transform: Transform, document: Document):
-    transform @= Transform(getattr(node, "transform", None))
+def parseSvgElement(node: svgelements.SVGElement, docTransform: Transform, document: Document):
+    nodeTransform = docTransform @ Transform(getattr(node, "transform", None))
     if isinstance(node, svgelements.Rect):
         temp = PathObject(str(node.id)) # str() to make pylance happy
         temp.style = readStyle(node)
-        temp.transform = transform
+        temp.transform = nodeTransform
 
         # pylance seems to think node.x and node.y are None (they are actually floats)
         xmin = node.x
@@ -719,7 +719,7 @@ def parseSvgElement(node: svgelements.SVGElement, transform: Transform, document
     elif isinstance(node, (svgelements.Circle, svgelements.Ellipse)):
         temp = PathObject(str(node.id)) # str() to make pylance happy
         temp.style = readStyle(node)
-        temp.transform = transform
+        temp.transform = nodeTransform
 
         center = node.cx + node.cy*1j # type: ignore
         temp += Arc(center, node.rx, node.ry * 1j) # type: ignore
@@ -727,7 +727,7 @@ def parseSvgElement(node: svgelements.SVGElement, transform: Transform, document
     elif isinstance(node, svgelements.Path):
         temp = PathObject(str(node.id)) # str() to make pylance happy
         temp.style = readStyle(node)
-        temp.transform = transform
+        temp.transform = nodeTransform
 
         current: complex = 0
         start = None
@@ -762,7 +762,7 @@ def parseSvgElement(node: svgelements.SVGElement, transform: Transform, document
         document.add(temp)
     elif isinstance(node, svgelements.Group):
         for child in node:
-            parseSvgElement(child, transform, document)
+            parseSvgElement(child, docTransform, document)
     # isinstance() won't work on SVGElement because it encapsulates all other svg classes
     elif isinstance(node, svgelements.SVG) or type(node) == svgelements.svgelements.SVGElement:
         pass # these element types can be safely ignored because they are not geometry
@@ -776,11 +776,10 @@ def parseSvg(svgPath: str, dimensions: complex, offset: complex) -> Document:
     #TODO: add warning when document height and width don't match
     # FIXME: scaling logic can be weird sometimes
     transform.scale(svg.viewbox.height / svg.height) # undo svgelements trying to scale document to viewport
-    
+
     # this line can cause unexpected behavior sometimes
     # mabye ask user if they want to scale drawing?
-    #transform.scale(dimensions.imag / svg.height) # scale to print area
-    transform.scale(svg.viewbox.height / svg.height) # temporary
+    #transform.scale(dimensions.imag / svg.viewbox.height) # scale to print area
 
     for child in svg:
         parseSvgElement(child, transform, document)
