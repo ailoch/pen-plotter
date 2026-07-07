@@ -573,6 +573,7 @@ class Document:
 class PlotSettings:
     # machine settings
     startPos: dict[str, float] = field(default_factory=lambda: {"X": 0, "Y": 0, "Z": 10})
+    endPos: tuple[float, float] = field(default_factory=lambda: (0, 0))
     penOffset: tuple[float, float] = (0, 0)
     plateSize: tuple[float, float] = (150, 150)
     drawableArea: tuple[float, float] = (150, 150)
@@ -582,8 +583,9 @@ class PlotSettings:
     speeds: dict[State, float] = field(default_factory=dict)
     accels: dict[State, float] = field(default_factory=dict)
     shortTravelThreshold: float = .5
-    tessellationTolerance: float = .05
-    maxTessellationDepth: int = 20
+    tessellationTolerance: float = .012
+    maxTessellationDepth: int = 10
+    loadDelay: float = 20
 
     prefixFile: str = ""
     suffixFile: str = ""
@@ -591,7 +593,6 @@ class PlotSettings:
     # visualization settings
     penWidth: float = .5
     lineTypes: dict[State, str] = field(default_factory=dict)
-    loadDelay: float = 20
     showPenPos: bool = True
     style: str = "line type"
     styleLineOrder: list[str] = field(default_factory=list)
@@ -780,12 +781,18 @@ class Plotter:
                     "TRAVEL_ACCEL": self.settings.accels[State.TRAVEL],
                     "LINE_WIDTH": self.settings.penWidth,
                     "LOAD_DELAY": self.settings.loadDelay,
+                    "END_X": self.settings.endPos[0],
+                    "END_Y": self.settings.endPos[1]
                 }
+                plateMaxX = self.settings.plateSize[0]
+                plateMaxY = self.settings.plateSize[1]
+                canvasMaxX = self.settings.drawableArea[0]
+                canvasMaxY = self.settings.drawableArea[1]
                 if self.settings.showPenPos:
-                    replace["BED_EXCLUDE_AREA"] = f"0x0,256x0,256x256,{self.settings.drawableArea[0]}x256,{self.settings.drawableArea[0]}x{256-self.settings.drawableArea[1]},0x{256-self.settings.drawableArea[1]}"
+                    replace["BED_EXCLUDE_AREA"] = f"0x0,{plateMaxX}x0,{plateMaxX}x{plateMaxY},{canvasMaxX}x{plateMaxY},{canvasMaxX}x{plateMaxY-canvasMaxY},0x{plateMaxY-canvasMaxY}"
                     replace["EXTRUDER_OFFSET"] = f"{self.settings.penOffset[0]}x{self.settings.penOffset[1]}"
                 else:
-                    replace["BED_EXCLUDE_AREA"] = f"0x0,256x0,256x{256-self.settings.drawableArea[1]},{256-self.settings.drawableArea[0]}x{256-self.settings.drawableArea[1]},{256-self.settings.drawableArea[0]}x256,0x256"
+                    replace["BED_EXCLUDE_AREA"] = f"0x0,{plateMaxX}x0,{plateMaxX}x{plateMaxY-canvasMaxY},{plateMaxX-canvasMaxX}x{plateMaxY-canvasMaxY},{plateMaxX-canvasMaxX}x{plateMaxY},0x{plateMaxY}"
                     replace["EXTRUDER_OFFSET"] = "0x2" # 0x2 is the default offset
 
                 with open(self.settings.prefixFile, "r") as srcFile:
@@ -913,7 +920,7 @@ def parseSvg(svgPath: str, dimensions: complex, offset: complex) -> Document:
 # closed paths will be entered/exited at any of their vertices
 # a stock TSP solver is not applicable here becuase paths can be altered
 # this converges in under a second with a few hundred objects
-def orderPaths(document: Document, startPos: complex = 0):
+def orderPaths(document: Document, startPos: complex = 0, endPos: complex = 0):
     objects = document.objects
     n = len(objects)
     if n <= 1:
@@ -971,10 +978,10 @@ def orderPaths(document: Document, startPos: complex = 0):
             leftPrev = startPos if i == 0 else endPt(order[i-1])
             for j in range(i, n):
                 oldLeft = abs(leftPrev - startPt(order[i]))
-                oldRight = 0.0 if j == n-1 else abs(endPt(order[j]) - startPt(order[j+1]))
+                oldRight = abs(endPt(order[j]) - endPos) if j == n-1 else abs(endPt(order[j]) - startPt(order[j+1]))
 
                 newLeft = abs(leftPrev - endPt(order[j])) # order[j] reversed becomes the new start
-                newRight = 0.0 if j == n-1 else abs(startPt(order[i]) - startPt(order[j+1])) # order[i] reversed becomes the new end
+                newRight = abs(startPt(order[i]) - endPos) if j == n-1 else abs(startPt(order[i]) - startPt(order[j+1])) # order[i] reversed becomes the new end
 
                 if newLeft + newRight < oldLeft + oldRight - 1e-9:
                     order[i:j+1] = reversed(order[i:j+1])
@@ -988,10 +995,10 @@ def orderPaths(document: Document, startPos: complex = 0):
             if not closed[objIdx]:
                 continue
             leftNeighbor = startPos if i == 0 else endPt(order[i-1])
-            rightNeighbor = None if i == n-1 else startPt(order[i+1])
+            rightNeighbor = endPos if i == n-1 else startPt(order[i+1])
 
             def anchorCost(v: complex) -> float:
-                return abs(leftNeighbor-v) + (0.0 if rightNeighbor is None else abs(v-rightNeighbor))
+                return abs(leftNeighbor-v) + abs(v-rightNeighbor)
 
             bestK = min(range(len(vertices[objIdx])), key=lambda k: anchorCost(vertices[objIdx][k]))
             if bestK != anchor[objIdx] and anchorCost(vertices[objIdx][bestK]) < anchorCost(vertices[objIdx][anchor[objIdx]]) - 1e-9:
@@ -1011,7 +1018,7 @@ plotter = Plotter("settings.json")
 
 document = parseSvg(fileIn, complex(plotter.settings.drawableArea[0], plotter.settings.drawableArea[1]), complex(plotter.settings.penOffset[0], plotter.settings.penOffset[1]))
 if plotter.settings.optimizePathOrder:
-    orderPaths(document, complex(plotter.pos["X"], plotter.pos["Y"]))
+    orderPaths(document, complex(plotter.pos["X"], plotter.pos["Y"]), complex(plotter.settings.endPos[0], plotter.settings.endPos[1]))
 plotter.createFile(document, fileOut)
 
 input() # wait for user to press enter before closing window

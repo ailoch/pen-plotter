@@ -4,12 +4,12 @@ G17
 
 ; FEATURE: Custom
 ; MACHINE_END_GCODE_START
-; filament end gcode 
+; filament end gcode
 
 M400 ; wait for buffer to clear
 
 G1 Z{TRAVEL_HEIGHT} F{TRAVEL_SPEED}
-G1 X128 Y256
+G1 X{END_X} Y{END_Y}
 G1 Z50
 G1 Z48
 

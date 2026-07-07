@@ -2,6 +2,7 @@
     // settings related to the physical machine
     "machine": {
         "startPos": [128, 128, 9], // starting position of the nozzle
+        "endPos": [128, 256], // final position of the nozzle
         "penOffset": [-38, -3], // position of the pen relative to the nozzle
         "plateSize": [256, 256], // size of the heatbed
         "drawableArea": [217, 244] // area of the paper the pen can safely move to
