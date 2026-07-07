@@ -40,15 +40,20 @@ different drawing (user wants to eventually prompt for these instead).
 
 2. **Geometry model** (region "shapeDefs", `_Process.py:20-441`)
    - `Segment` (ABC) → `Line`, `Arc`, `QuadraticBezier`, `CubicBezier`. Each knows its
-     own `length()`, `point(t)`, `derivative(t)`, `extrema()`, `bounds()`.
+     own `length()`, `point(t)`, `derivative(t)`, `extrema()`, `bounds()`, and
+     `tessellate(tolerance, maxDepth)` (returns a list of `Line`/circular-`Arc`
+     segments approximating itself within `tolerance` mm — see "Adaptive
+     tessellation" below).
    - `Path` = list of segments, with `start()`/`end()`, `isClosed()` (start ≈ end
      within a tolerance), `vertices()` (the point between every pair of consecutive
      segments — i.e. every candidate place the pen could enter/exit without changing
-     the drawn shape; includes the final endpoint too for open paths), and
+     the drawn shape; includes the final endpoint too for open paths),
      `rotateTo(index)` (re-splits a *closed* path so `segments[index]` is drawn
      first — raises if the path isn't closed, since re-splitting an open path would
-     change its shape). `PathObject` = a `Path` + `Style` (stroke width/color,
-     currently unused for output) + `Transform`.
+     change its shape), and `tessellate(tolerance, maxDepth)` (non-mutating —
+     concatenates each segment's own `tessellate()` into a new `Path`).
+     `PathObject` = a `Path` + `Style` (stroke width/color, currently unused for
+     output) + `Transform`.
    - `Document` = list of `PathObject`s plus an id→object lookup.
    - `Transform` is a hand-rolled 2D affine matrix (`[a,b,c,d,e,f]`, same convention as
      SVG's `matrix()`), supporting translate/scale/rotate/skew/flip and composition via
@@ -71,9 +76,11 @@ different drawing (user wants to eventually prompt for these instead).
      needing an external TSP/routing library.
 
 4. **Gcode generation** (`Plotter` class, `_Process.py:517` region)
-   - `addPath` walks each segment: lines are drawn directly; perfect-radius arcs
-     become native `G2`/`G3` arcs; non-circular arcs and beziers are tessellated into
-     line segments (`tesselate`, fixed segment length, not adaptive yet — see TODO).
+   - `addPath` first calls `objectGeo.tessellate(tessellationTolerance,
+     maxTessellationDepth)` to reduce the path to only `Line`/circular-`Arc`
+     segments (adaptive — see "Adaptive tessellation" below), then walks those:
+     lines become `G1` moves, arcs become native `G2`/`G3` arcs. No other segment
+     types can reach this point.
    - `penMove` decides travel vs. draw moves, and whether a travel move is "short"
      (stays down, `shortTravelThreshold`) or "long" (lifts pen to travel height,
      moves, lowers again).
@@ -87,6 +94,34 @@ different drawing (user wants to eventually prompt for these instead).
      `{LOAD_DELAY}`, `{BED_EXCLUDE_AREA}`) substituted from `PlotSettings` via
      `fileAppend`.
 
+### Adaptive tessellation (`Segment.tessellate`/`Path.tessellate`, used by `addPath`)
+
+Reduces any path to only `Line`s and circular `Arc`s (gcode's native `G1`/`G2`/`G3`
+primitives), fit to within `tessellationTolerance` mm of the original curve instead of
+chopping into fixed-length pieces — long gentle curves get few segments, only sharp
+bends get many.
+
+- `Line.tessellate` → itself (already exact). `Arc.tessellate` → itself if
+  `abs(abs(u)-abs(v)) <= tolerance` (already circular — same tolerance value doubles as
+  the "is this basically a circle" threshold); otherwise, like `QuadraticBezier`/
+  `CubicBezier`, delegates to the shared `Segment._fitToTolerance` method.
+- `Segment._fitToTolerance(t0, t1, tolerance, maxDepth, depth)` recursively fits the
+  cheapest option first: (1) a `Line` from `point(t0)` to `point(t1)`, accepted if a
+  handful of interior sample points deviate from the chord by no more than tolerance;
+  (2) else a circular `Arc` via `Arc.fromThreePoints(point(t0), point(mid), point(t1))`
+  (an alternate constructor — circumcircle for center/radius, then angles around that
+  center to pick `t0`/`sweep)`, returns`None` when the 3 points are ~collinear;
+  (3) else split at the midpoint and recurse on each half.
+  `maxTessellationDepth` caps the recursion as a safety net for pathological curves
+  (cusps, coincident control points) — hitting it falls back to the Line from step 1
+  and prints a warning rather than raising.
+- `_fitToTolerance` is defined once on the `Segment` base class (not per subclass)
+  because it only calls `self.point(t)`, which every segment type provides and which
+  is valid for any real `t`, not just `[0,1]`.
+- `Path.tessellate` is a thin, non-mutating aggregator — concatenates each segment's
+  `tessellate()` into a new `Path`, leaving the original untouched (other code, like the
+  debug bounding boxes, still reads the original geometry).
+
 ## Settings (`settings.json`, loaded via `commentjson` so `//` comments are allowed)
 
 Loaded into `PlotSettings` (`_Process.py:443`) by `initFromJson`, which validates
@@ -97,8 +132,9 @@ setting names against the dataclass fields and prints a warning for anything unk
   is mounted offset from where the nozzle would be), `plateSize` (256x256 for P1S),
   `drawableArea` (safe region the pen can reach on the paper).
 - `gcode`: per-`State` (`draw`/`travel`, plus debug bounding-box states) heights/
-  speeds/accels, `shortTravelThreshold`, `avgTesselatedLineLength`, and the
-  prefix/suffix gcode file paths.
+  speeds/accels, `shortTravelThreshold`, `tessellationTolerance`/
+  `maxTessellationDepth` (see "Adaptive tessellation" above), and the prefix/suffix
+  gcode file paths.
 - `visualization`: cosmetic-only settings controlling how the gcode looks in Bambu
   Studio's preview (pen width for line rendering, `lineTypes` per state, `loadDelay`
   seconds to wait for the user to load the pen, `showPenPos` toggle, and the
@@ -129,8 +165,6 @@ setting names against the dataclass fields and prints a warning for anything unk
 ## Known TODOs / rough edges (from comments in the code)
 
 - `fileIn`/`fileOut` should eventually be user-prompted instead of hardcoded.
-- `Path.tessellate()` is an empty stub; actual tessellation happens ad hoc in
-  `Plotter.tesselate()` and is fixed-length, not adaptive.
 - Color (`strokeColor`/`fillColor` hex→RGB) isn't implemented; `Style` colors are
   unused placeholders.
 - `Document.add()` has a noted bug: adding an object whose `id` collides with an

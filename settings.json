@@ -4,7 +4,7 @@
         "startPos": [128, 128, 9], // starting position of the nozzle
         "penOffset": [-38, -3], // position of the pen relative to the nozzle
         "plateSize": [256, 256], // size of the heatbed
-        "drawableArea": [217, 244] // areea of the paper the pen can safely move to
+        "drawableArea": [217, 244] // area of the paper the pen can safely move to
     },
 
     // controls the output gcode
@@ -13,7 +13,8 @@
         "speeds": {"draw": 1800, "travel": 6000}, // mm/min
         "accels": {"draw": 3000, "travel": 10000}, // mm/s^2
         "shortTravelThreshold": 0.7, // travel moves below this distance will not lift the pen
-        "avgTesselatedLineLength": 0.5, // average length per line on tesselated paths in mm
+        "tessellationTolerance": 0.012, // max allowed deviation (mm) of gcode from the true curve
+        "maxTessellationDepth": 10, // cap on recursive curve fitting
 
         "prefixFile": "Append/startCode.gcode",
         "suffixFile": "Append/endCode.gcode"

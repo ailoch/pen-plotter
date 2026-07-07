@@ -132,6 +132,51 @@ class Transform:
 
 # wrapper for different types of path segments
 class Segment(ABC):
+    # recursively fits self[t0:t1] to a single Line or circular Arc within tolerance
+    # (mm), falling back to bisecting the range when neither fits. works for any
+    # segment type since it only samples self.point(t) (valid for any real t)
+    def _fitToTolerance(self, t0: float, t1: float, tolerance: float, maxDepth: int, depth: int = 0) -> list["Segment"]:
+        N_SAMPLES = 5
+
+        p0 = self.point(t0)
+        p1 = self.point(t1)
+        sampleTs = [t0 + (t1-t0) * (i / (N_SAMPLES+1)) for i in range(1, N_SAMPLES+1)]
+        samplePts = [self.point(t) for t in sampleTs]
+
+        if depth >= maxDepth:
+            print(f"Warning: tessellation of {type(self).__name__} exceeded maxTessellationDepth ({maxDepth}); falling back to a straight line, tolerance may be exceeded")
+            return [Line(p0, p1)]
+
+        # --- try a Line ---
+        chord = p1 - p0
+        chordLen = abs(chord)
+        if chordLen < 1e-9:
+            # zero-length chord: fall back to distance from p0 directly
+            maxDev = max((abs(p - p0) for p in samplePts), default=0.0)
+        else:
+            chordDir = chord / chordLen
+            # rotate (p - p0) into the chord's frame; the imaginary part is then the
+            # perpendicular distance from the chord
+            maxDev = max((abs(((p - p0) * chordDir.conjugate()).imag) for p in samplePts), default=0.0)
+
+        if maxDev <= tolerance:
+            return [Line(p0, p1)]
+
+        # --- try a circular Arc via 3-point circumcircle ---
+        tm = (t0 + t1) / 2
+        pm = self.point(tm)
+
+        arc = Arc.fromThreePoints(p0, pm, p1)
+        if arc is not None:
+            maxRadialDev = max((abs(abs(p - arc.center) - abs(arc.u)) for p in samplePts), default=0.0)
+            if maxRadialDev <= tolerance:
+                return [arc]
+
+        # --- neither fit: split and recurse ---
+        left = self._fitToTolerance(t0, tm, tolerance, maxDepth, depth+1)
+        right = self._fitToTolerance(tm, t1, tolerance, maxDepth, depth+1)
+        return left + right
+
     @abstractmethod
     def length(self) -> float:
         """Return the arc length"""
@@ -155,6 +200,10 @@ class Segment(ABC):
     @abstractmethod
     def extrema(self) -> list[float]:
         """Return the x and y extrema of a segment"""
+
+    @abstractmethod
+    def tessellate(self, tolerance: float, maxDepth: int) -> list["Segment"]:
+        """Return a list of line/arc segments approximating this segment within a tolerance (mm)"""
 
     # return (xmin, ymin, xmax, ymax)
     def bounds(self) -> tuple[float, float, float, float]:
@@ -198,6 +247,9 @@ class Line(Segment):
         # lines have no extrema
         return []
 
+    def tessellate(self, tolerance: float, maxDepth: int) -> list[Segment]:
+        return [self]
+
 @dataclass
 class Arc(Segment):
     center: complex = 0
@@ -205,6 +257,45 @@ class Arc(Segment):
     v: complex = 0
     t0: float = 0
     sweep: float = 2*math.pi # sweep is between -2pi (ccw) and 2pi (cw)
+
+    # returns an Arc that passes through the given points
+    @classmethod
+    def fromThreePoints(cls, p0: complex, pm: complex, p1: complex) -> "Arc | None":
+        ax, ay = p0.real, p0.imag
+        bx, by = pm.real, pm.imag
+        cx, cy = p1.real, p1.imag
+
+        d = 2 * (ax*(by-cy) + bx*(cy-ay) + cx*(ay-by))
+
+        # d = |p1-p0| * |pm-p0| * sin(theta), theta being the angle at p0 between the
+        # two chords - dividing it out gives sin(theta) directly
+        sideProduct = abs(pm-p0) * abs(p1-p0)
+        if sideProduct < 1e-12 or abs(d / sideProduct) < 1e-9:
+            return None
+
+        ax2ay2 = ax*ax + ay*ay
+        bx2by2 = bx*bx + by*by
+        cx2cy2 = cx*cx + cy*cy
+
+        centerX = (ax2ay2*(by-cy) + bx2by2*(cy-ay) + cx2cy2*(ay-by)) / d
+        centerY = (ax2ay2*(cx-bx) + bx2by2*(ax-cx) + cx2cy2*(bx-ax)) / d
+
+        center = complex(centerX, centerY)
+        radius = abs(p0 - center)
+
+        # angles of the 3 points around the center (negated imag to match the Arc's
+        # u=(r,0)/v=(0,-r) basis, where increasing angle sweeps clockwise / +sweep = G2)
+        a0 = math.atan2(-(p0-center).imag, (p0-center).real)
+        am = math.atan2(-(pm-center).imag, (pm-center).real)
+        a1 = math.atan2(-(p1-center).imag, (p1-center).real)
+
+        dm = (am - a0 + math.pi) % math.tau - math.pi # am relative to a0, unwrapped to (-pi, pi]
+
+        # pick the winding that actually sweeps through pm, not the long way around
+        candidates = [(a1 - a0) + k*math.tau for k in (-2, -1, 0, 1, 2)]
+        sweep = min(candidates, key=lambda cand: abs(cand/2 - dm))
+
+        return cls(center=center, u=complex(radius, 0), v=complex(0, -radius), t0=a0, sweep=sweep)
 
     def _containsAngle(self, theta: float) -> bool:
         return self._thetaToT(theta) is not None
@@ -261,6 +352,11 @@ class Arc(Segment):
                 extrema.append(t)
         return extrema
 
+    def tessellate(self, tolerance: float, maxDepth: int) -> list[Segment]:
+        if abs(abs(self.u) - abs(self.v)) <= tolerance:
+            return [self] # circular arcs don't need to be tesselated
+        return self._fitToTolerance(0.0, 1.0, tolerance, maxDepth)
+
 @dataclass
 class QuadraticBezier(Segment):
     start: complex = 0
@@ -309,6 +405,9 @@ class QuadraticBezier(Segment):
         ts = self._axisExtrema(self.start.real, self.p1.real, self.end.real)
         ts += self._axisExtrema(self.start.imag, self.p1.imag, self.end.imag)
         return ts
+
+    def tessellate(self, tolerance: float, maxDepth: int) -> list[Segment]:
+        return self._fitToTolerance(0.0, 1.0, tolerance, maxDepth)
 
 @dataclass
 class CubicBezier(Segment):
@@ -374,6 +473,9 @@ class CubicBezier(Segment):
         ts += self._axisExtrema(3*a.imag, 2*b.imag, c.imag)
         return ts
 
+    def tessellate(self, tolerance: float, maxDepth: int) -> list[Segment]:
+        return self._fitToTolerance(0.0, 1.0, tolerance, maxDepth)
+
 # stores a list of segments
 @dataclass
 class Path:
@@ -404,7 +506,7 @@ class Path:
     # re-splits a closed path so segments[index] becomes the first segment drawn
     def rotateTo(self, index: int):
         if not self.isClosed():
-            raise ValueError("Path.rotateTo() only makes sense on a closed path")
+            raise ValueError("Path.rotateTo() is not valid on open paths")
         self.segments = self.segments[index:] + self.segments[:index]
 
     def reverse(self):
@@ -419,8 +521,13 @@ class Path:
             bounds = (min(bounds[0], segmentBounds[0]), min(bounds[1], segmentBounds[1]), max(bounds[2], segmentBounds[2]), max(bounds[3], segmentBounds[3]))
         return bounds
 
-    def tessellate(self): #TODO
-        pass
+    # returns a new Path made of only Lines/circular Arcs, fit to within tolerance
+    # (mm) of the original curves. non-mutating - leaves self untouched
+    def tessellate(self, tolerance: float, maxDepth: int) -> "Path":
+        newSegments: list[Segment] = []
+        for segment in self.segments:
+            newSegments.extend(segment.tessellate(tolerance, maxDepth))
+        return Path(newSegments)
 
 # stores a path, style, and transform
 @dataclass
@@ -475,7 +582,8 @@ class PlotSettings:
     speeds: dict[State, float] = field(default_factory=dict)
     accels: dict[State, float] = field(default_factory=dict)
     shortTravelThreshold: float = .5
-    avgTesselatedLineLength: float = .5
+    tessellationTolerance: float = .05
+    maxTessellationDepth: int = 20
 
     prefixFile: str = ""
     suffixFile: str = ""
@@ -642,42 +750,26 @@ class Plotter:
                     self.addLine({"G": "1", "Z": self.settings.heights[lineType or State.DRAW]}, file)
                 self.addLine({"G": "1", "X": str(pos.real), "Y": str(pos.imag), "E": math.hypot(pos.real-self.pos["X"], pos.imag-self.pos["Y"])}, file, lineType or State.DRAW)
 
-    def tesselate(self, segment: Segment): #TODO: adaptive tesselation
-        if isinstance(segment, Line):
-            return [segment.start, segment.end]
-        nSegments = math.ceil(segment.length() / self.settings.avgTesselatedLineLength)
-        return [segment.point(t / nSegments) for t in range(nSegments+1)]
-
     def addPath(self, object: PathObject, file: TextIO):
-        objectGeo: Path = object.geometry
-        for segment in objectGeo.segments:
+        tessellated = object.geometry.tessellate(self.settings.tessellationTolerance, self.settings.maxTessellationDepth)
+        for segment in tessellated.segments:
             if isinstance(segment, Line):
                 self.penMove(segment.start, file, True)
                 self.penMove(segment.end, file)
             elif isinstance(segment, Arc):
                 self.penMove(segment.point(0), file, True)
-                if abs(abs(segment.u) - abs(segment.v)) <= .001:
-                    centerOffset = segment.center - segment.point(0)
-                    end = segment.point(1)
-                    params = {"G": "2", "X": end.real, "Y": end.imag, "I": centerOffset.real, "J": centerOffset.imag, "E": segment.length()}
-                    if segment.sweep < 0:
-                        params["G"] = "3"
-                    self.addLine(params, file, State.DRAW)
-                else:
-                    points = self.tesselate(segment)
-                    for point in points:
-                        self.penMove(point, file)
-            elif isinstance(segment, (QuadraticBezier, CubicBezier)):
-                self.penMove(segment.start, file, True)
-                points = self.tesselate(segment)
-                for point in points:
-                    self.penMove(point, file)
+                centerOffset = segment.center - segment.point(0)
+                end = segment.point(1)
+                params = {"G": "2", "X": end.real, "Y": end.imag, "I": centerOffset.real, "J": centerOffset.imag, "E": segment.length()}
+                if segment.sweep < 0:
+                    params["G"] = "3"
+                self.addLine(params, file, State.DRAW)
             else:
                 print(f"Unknown path type {type(segment)}")
-            if self.settings.showBoundingBoxes:
-                self._moveRect(segment.bounds(), file, State._SEGMENT_BOUNDS)
         if self.settings.showBoundingBoxes:
-            self._moveRect(objectGeo.bounds(), file, State._PATH_BOUNDS)
+            for segment in object.geometry.segments:
+                self._moveRect(segment.bounds(), file, State._SEGMENT_BOUNDS)
+            self._moveRect(object.geometry.bounds(), file, State._PATH_BOUNDS)
 
     def createFile(self, geom: Document, fileOut: str):
         try:
@@ -816,7 +908,7 @@ def parseSvg(svgPath: str, dimensions: complex, offset: complex) -> Document:
 
 #region routing
 
-# reorders the paths in document.objects to minimise travel distance
+# reorders the paths in document.objects to minimize travel distance
 # open paths will be reversed as needed
 # closed paths will be entered/exited at any of their vertices
 # a stock TSP solver is not applicable here becuase paths can be altered
