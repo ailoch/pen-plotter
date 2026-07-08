@@ -88,6 +88,13 @@ different drawing (user wants to eventually prompt for these instead).
      position as last time), and can annotate lines with `; FEATURE: X` comments so
      Bambu Studio's preview colors moves by "line type" / "instruction" / "segment"
      (purely cosmetic — see `visualization.style` in settings).
+   - `createFile` passes `raised=(objectCount % 2 == 0 and objectHeightChange)` to
+     `addPath` for every other object; `penMove` adds a fixed +0.001mm to the Z height
+     of every travel/draw move for that object. The offset is small enough to have no
+     effect on the physical print, but it's enough for Bambu Studio's slicer to treat
+     alternating objects as separate Z layers in its preview — otherwise every object
+     shares the same draw height and the slicer's layer view can't distinguish them
+     (purely cosmetic, like `; FEATURE:` comments — see `visualization.objectHeightChange`).
    - `createFile` stitches together: `Append/startCode.gcode` (prefix) → generated
      moves for every object in the `Document` → `Append/endCode.gcode` (suffix).
      Prefix/suffix files use `{PLACEHOLDER}` tokens (e.g. `{TRAVEL_HEIGHT}`,
@@ -110,7 +117,7 @@ bends get many.
   handful of interior sample points deviate from the chord by no more than tolerance;
   (2) else a circular `Arc` via `Arc.fromThreePoints(point(t0), point(mid), point(t1))`
   (an alternate constructor — circumcircle for center/radius, then angles around that
-  center to pick `t0`/`sweep)`, returns`None` when the 3 points are ~collinear;
+  center to pick `t0`/`sweep`), returns`None` when the 3 points are ~collinear;
   (3) else split at the midpoint and recurse on each half.
   `maxTessellationDepth` caps the recursion as a safety net for pathological curves
   (cusps, coincident control points) — hitting it falls back to the Line from step 1
@@ -137,9 +144,10 @@ setting names against the dataclass fields and prints a warning for anything unk
   gcode file paths.
 - `visualization`: cosmetic-only settings controlling how the gcode looks in Bambu
   Studio's preview (pen width for line rendering, `lineTypes` per state, `loadDelay`
-  seconds to wait for the user to load the pen, `showPenPos` toggle, and the
-  `style`/`styleLineOrder` coloring scheme described in the comments in
-  `_Process.py:568-588`).
+  seconds to wait for the user to load the pen, `showPenPos` toggle,
+  `objectHeightChange` toggle for alternating +0.001mm Z per object so Bambu Studio's
+  preview shows each object as a separate layer, and the `style`/`styleLineOrder`
+  coloring scheme described in the comments in `_Process.py:568-588`).
 - `debug`: `showBoundingBoxes` — draws segment/path/document bounding rectangles in
   the output for visual debugging (as `_SEGMENT_BOUNDS`/`_PATH_BOUNDS`/
   `_DOCUMENT_BOUNDS` pseudo-states).

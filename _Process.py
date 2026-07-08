@@ -71,7 +71,7 @@ class Transform:
             self.matrix[1]*other[4] + self.matrix[3]*other[5] + self.matrix[5]
         ]
 
-    # returnss other@self instrad of self@other
+    # returns other@self instead of self@other
     def _getReverseTransform(self, other: list[float]):
         return [
             other[0]*self.matrix[0] + other[2]*self.matrix[1],
@@ -217,7 +217,7 @@ class Segment(ABC):
 
         temp = (min(xs), min(ys), max(xs), max(ys))
 
-        # bambu studio renderer breaks if very large cordinates are given
+        # bambu studio renderer breaks if very large coordinates are given
         return (max(temp[0], -5000), max(temp[1], -5000), min(temp[2], 5256), min(temp[3], 5256))
 
 @dataclass
@@ -240,7 +240,7 @@ class Line(Segment):
         self.end, self.start = self.start, self.end
 
     def derivative(self, t: float) -> complex:
-        # line derivative is constant, so t is irrelavent
+        # line derivative is constant, so t is irrelevant
         return self.end - self.start
 
     def extrema(self) -> list[float]:
@@ -594,6 +594,7 @@ class PlotSettings:
     penWidth: float = .5
     lineTypes: dict[State, str] = field(default_factory=dict)
     showPenPos: bool = True
+    objectHeightChange: bool = False
     style: str = "line type"
     styleLineOrder: list[str] = field(default_factory=list)
     optimizePathOrder: bool = True
@@ -736,29 +737,35 @@ class Plotter:
             file.write(line.strip() + "\n")
 
     # moves pen to the specified location
-    def penMove(self, pos: complex, file: TextIO, travel: bool = False, lineType: State | None = None):
+    def penMove(self, pos: complex, file: TextIO, travel: bool = False, lineType: State | None = None, raised: bool = False):
         distSquared = (pos.real - self.pos["X"]) ** 2 + (pos.imag - self.pos["Y"]) ** 2
         if distSquared >= .000001: # moves shorter than .001 mm are probably caused by rounding errors
             if travel:
                 if distSquared >= self.settings.shortTravelThreshold ** 2: # long travel
                     self.addLine({"G": "1", "Z": self.settings.heights[State.TRAVEL]}, file, State.TRAVEL)
                     self.addLine({"G": "1", "X": str(pos.real), "Y": str(pos.imag)}, file)
-                    self.addLine({"G": "1", "Z": self.settings.heights[State.DRAW]}, file)
+                    newHeight = self.settings.heights[State.DRAW]
+                    if raised:
+                        newHeight += .001
+                    self.addLine({"G": "1", "Z": newHeight}, file)
                 else: # short travel
                     self.addLine({"G": "1", "X": str(pos.real), "Y": str(pos.imag)}, file, State.DRAW)
             else: # draw moves
-                if self.pos["Z"] != self.settings.heights[lineType or State.DRAW]:
-                    self.addLine({"G": "1", "Z": self.settings.heights[lineType or State.DRAW]}, file)
+                newHeight = self.settings.heights[lineType or State.DRAW]
+                if raised:
+                    newHeight += .001
+                if self.pos["Z"] != newHeight:
+                    self.addLine({"G": "1", "Z": newHeight}, file)
                 self.addLine({"G": "1", "X": str(pos.real), "Y": str(pos.imag), "E": math.hypot(pos.real-self.pos["X"], pos.imag-self.pos["Y"])}, file, lineType or State.DRAW)
 
-    def addPath(self, object: PathObject, file: TextIO):
+    def addPath(self, object: PathObject, file: TextIO, raised: bool = False):
         tessellated = object.geometry.tessellate(self.settings.tessellationTolerance, self.settings.maxTessellationDepth)
         for segment in tessellated.segments:
             if isinstance(segment, Line):
-                self.penMove(segment.start, file, True)
-                self.penMove(segment.end, file)
+                self.penMove(segment.start, file, True, raised=raised)
+                self.penMove(segment.end, file, raised=raised)
             elif isinstance(segment, Arc):
-                self.penMove(segment.point(0), file, True)
+                self.penMove(segment.point(0), file, True, raised=raised)
                 centerOffset = segment.center - segment.point(0)
                 end = segment.point(1)
                 params = {"G": "2", "X": end.real, "Y": end.imag, "I": centerOffset.real, "J": centerOffset.imag, "E": segment.length()}
@@ -798,14 +805,16 @@ class Plotter:
                 with open(self.settings.prefixFile, "r") as srcFile:
                     self.fileAppend(srcFile, destFile, replace)
 
+                objectCount = 0
                 for object in geom.objects:
-                    self.addPath(object, destFile)
+                    self.addPath(object, destFile, objectCount % 2 == 0 and self.settings.objectHeightChange)
+                    objectCount += 1
                 if self.settings.showBoundingBoxes:
                     self._moveRect(geom.bounds(), destFile, State._DOCUMENT_BOUNDS)
 
                 with open(self.settings.suffixFile, "r") as srcFile:
                     self.fileAppend(srcFile, destFile, replace)
-            print("Post process completed sucessfully")
+            print("Post process completed successfully")
         except PermissionError as e:
             print(f'Could not open file "{e.filename}". Another program might be editing it.')
         except FileNotFoundError as e:
@@ -918,7 +927,7 @@ def parseSvg(svgPath: str, dimensions: complex, offset: complex) -> Document:
 # reorders the paths in document.objects to minimize travel distance
 # open paths will be reversed as needed
 # closed paths will be entered/exited at any of their vertices
-# a stock TSP solver is not applicable here becuase paths can be altered
+# a stock TSP solver is not applicable here because paths can be altered
 # this converges in under a second with a few hundred objects
 def orderPaths(document: Document, startPos: complex = 0, endPos: complex = 0):
     objects = document.objects

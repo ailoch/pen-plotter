@@ -28,6 +28,7 @@
         "penWidth": 0.7, // pen width in mm
         "lineTypes": {"draw": "Outer wall", "_segmentBounds": "Support transition", "_pathBounds": "Support interface", "_documentBounds": "Support"},
         "showPenPos": true, // if false, nozzle position will be shown in slicer
+        "objectHeightChange": true, // if true, slightly increases the height of every other object so they show as seperate layers when viewed in the slicer
 
         "style": "line type", // options are "line type", "instruction", and "segment"
           // line type: shows role of lines in slicer view (styleLineOrder is ignored)
