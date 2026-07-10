@@ -36,6 +36,14 @@ different drawing (user wants to eventually prompt for these instead).
      transform directly (`transform @ Transform(node.transform)`), never accumulate it
      further through recursion, or nested groups' scale compounds with every level of
      nesting.
+   - A `<path>`'s `d` attribute can encode a *compound* shape as multiple `M`/`m`
+     (moveto) subpaths in one element (e.g. a shape with a hole, or several
+     unconnected strokes that are still logically one drawn object) — `horse.svg`'s
+     single `<path>` is a real example, with 3 subpaths. `parseSvgElement` finalizes
+     the segments collected so far into their own `Path` on every `Move` after the
+     first, populating `PathObject.geometry` with one entry per subpath (previously
+     all subpaths were merged into one continuous `Path`, which drew a spurious line
+     connecting unrelated loops).
    - Text, defs, and other non-geometry nodes are ignored with a printed warning.
 
 2. **Geometry model** (region "shapeDefs", `_Process.py:20-441`)
@@ -52,35 +60,82 @@ different drawing (user wants to eventually prompt for these instead).
      first — raises if the path isn't closed, since re-splitting an open path would
      change its shape), and `tessellate(tolerance, maxDepth)` (non-mutating —
      concatenates each segment's own `tessellate()` into a new `Path`).
-     `PathObject` = a `Path` + `Style` (stroke width/color, currently unused for
-     output) + `Transform`.
+     `PathObject` = a `list[Path]` + `Style` (stroke width/color, currently unused
+     for output) + `Transform`. Almost always one `Path` (one `<rect>`/`<circle>`/
+     `<ellipse>`, or one simple `<path>`), but more than one for a compound `<path>`
+     (see the parsing gotcha above) — all subpaths of one `PathObject` are
+     considered part of the same logical object for routing/infill purposes.
+     `PathObject` mirrors `Path`'s own interface (`start()`/`end()`/`isClosed()`/
+     `vertices()`/`rotateTo()`/`reverse()`/`bounds()`) so the routing code in
+     `orderPaths` can treat a `list[Path]` and a `list[PathObject]` identically (see
+     "Path ordering / routing" below) — `isClosed()` is `True` only when there's
+     exactly *one* subpath and it's closed; `vertices()`/`rotateTo()` raise
+     `ValueError` otherwise (same invariant `Path.rotateTo()` already enforces). A
+     multi-subpath (or single open-path) object is otherwise treated like an open
+     `Path`: freely reversible as a whole, but not re-anchorable at an arbitrary
+     vertex.
    - `Document` = list of `PathObject`s plus an id→object lookup.
    - `Transform` is a hand-rolled 2D affine matrix (`[a,b,c,d,e,f]`, same convention as
      SVG's `matrix()`), supporting translate/scale/rotate/skew/flip and composition via
      `@`/`@=` (SVG-order) and `*`/`*=` (reverse order).
 
-3. **Path ordering / routing** (`orderPaths`, region "routing", called between
-   `parseSvg` and `plotter.createFile`)
-   - Reorders `document.objects` (and reverses/rotates individual paths) to
-     approximately minimize pen-up travel. This is TSP-like but not quite TSP: each
-     path can be drawn forwards or backwards for free (2 candidate anchor points via
-     `Path.reverse()`), and a *closed* path can additionally be entered/exited at any
-     of its vertices (`Path.rotateTo()`), since it ends where it starts.
-   - Solved with nearest-neighbor construction, then two interleaved local-search
-     refinement passes run to convergence: 2-opt (try reversing runs of the tour —
-     reversing a run also flips the draw direction of every open path in it, which
-     leaves the connections *within* the run unchanged, so only the two boundary
-     edges need comparing) and anchor optimization (for each closed path, try every
-     vertex against its current tour neighbors, keep the cheapest).
+3. **Path ordering / routing** (`orderPaths`/`_orderSequence`, region "routing",
+   called between `parseSvg` and `plotter.createFile`)
+   - `_orderSequence(items, startPos, endPos)` is the actual routing algorithm,
+     generalized to work on *any* list of items exposing `start()`/`end()`/
+     `isClosed()`/`vertices()`/`rotateTo()`/`reverse()` — both `Path` and
+     `PathObject` qualify. Reorders (and returns) `items` to approximately minimize
+     travel distance. This is TSP-like but not quite TSP: each item can be drawn
+     forwards or backwards for free (`reverse()`), and a *closed* item can
+     additionally be entered/exited at any of its vertices (`rotateTo()`), since it
+     ends where it starts.
+   - Solved with nearest-neighbor construction, then three interleaved local-search
+     moves run to convergence: 2-opt (try reversing runs of the tour — reversing a
+     run also flips the draw direction of every open item in it, which leaves the
+     connections *within* the run unchanged, so only the two boundary edges need
+     comparing); anchor optimization (for each closed item, try every vertex against
+     its current tour neighbors, keep the cheapest); and the *rendezvous move* (see
+     below).
+   - The **rendezvous move** exists because anchor optimization is coordinate descent
+     — it moves one anchor at a time against its *current* neighbors, so it can't
+     relocate a *group* of closed loops that should all be cut near a shared point
+     (concentric infill loops sharing a seam, or the near-coincident inner/outer
+     contours of a traced outline like `horse.svg`'s). Escaping that needs several
+     anchors to move at once. The move snaps every closed item's anchor to a common
+     rendezvous point — trying each vertex of the *smallest* closed item as the
+     candidate rendezvous (the loop that most tightly constrains where the group can
+     meet) — and keeps it only if total tour length drops, so it never hurts the
+     spread-out case (there it's simply rejected). Without it, a chain of closed
+     loops routes to a coordinate-descent local minimum that can be many× longer than
+     optimal (measured ~9× on `horse.svg`'s 3 subpaths before this move was added).
+   - `startPos`/`endPos` anchor the very first/last item in the tour to a fixed
+     point (e.g. the plotter's physical home/park position); either may be `None`
+     instead, meaning that end of the tour is free — the boundary cost term for a
+     `None` side just drops to zero (in the shared `tourCost` helper and every move),
+     so nearest-neighbor seeds from the first item's own start and the refinement
+     moves stop comparing against it.
+   - `orderPaths(document, startPos, endPos)` calls `_orderSequence` **twice, in two
+     independent passes**, so cost stays bounded even when an object has many
+     subpaths (e.g. dense infill or a dotted line — routing every subpath across
+     every object jointly in one pass would be much slower):
+     1. *Pass 1:* for each `PathObject` with more than one subpath, order its own
+        `list[Path]` independently, free-start/free-end (`None`/`None`) — neither
+        neighboring object is decided yet, so there's nothing to anchor to.
+     2. *Pass 2:* order `document.objects` itself, anchored to the machine's
+        `startPos`/`endPos`, using each object's start/end as already fixed by pass
+        1 (a multi-subpath object's internal arrangement is *not* revisited here).
    - Fast enough for the stated scale (200-300 objects, well under a second) without
      needing an external TSP/routing library.
 
 4. **Gcode generation** (`Plotter` class, `_Process.py:517` region)
-   - `addPath` first calls `objectGeo.tessellate(tessellationTolerance,
-     maxTessellationDepth)` to reduce the path to only `Line`/circular-`Arc`
-     segments (adaptive — see "Adaptive tessellation" below), then walks those:
-     lines become `G1` moves, arcs become native `G2`/`G3` arcs. No other segment
-     types can reach this point.
+   - `addPath` loops over each subpath in `object.geometry`, calling
+     `path.tessellate(tessellationTolerance, maxTessellationDepth)` to reduce it to
+     only `Line`/circular-`Arc` segments (adaptive — see "Adaptive tessellation"
+     below), then walks those: lines become `G1` moves, arcs become native `G2`/`G3`
+     arcs. No other segment types can reach this point. The travel-move-to-start
+     that already precedes every `Line`/`Arc` naturally becomes the pen-lift between
+     subpaths — it's a no-op when consecutive segments are already connected,
+     exactly as it is within a single subpath.
    - `penMove` decides travel vs. draw moves, and whether a travel move is "short"
      (stays down, `shortTravelThreshold`) or "long" (lifts pen to travel height,
      moves, lowers again).

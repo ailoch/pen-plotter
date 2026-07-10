@@ -529,22 +529,56 @@ class Path:
             newSegments.extend(segment.tessellate(tolerance, maxDepth))
         return Path(newSegments)
 
-# stores a path, style, and transform
+# stores a list of paths, style, and transform
 @dataclass
 class PathObject:
     id: str
-    geometry: Path = field(default_factory=Path)
+    geometry: list[Path] = field(default_factory=lambda: [Path()])
     style: Style = field(default_factory=Style)
     transform : Transform = field(default_factory=Transform)
 
     def __iadd__(self, segment):
-        self.geometry.segments.append(segment)
+        self.geometry[-1].segments.append(segment)
         return self
 
     def applyTransformations(self):
-        for segment in self.geometry.segments:
-            segment.applyTransform(self.transform)
+        for path in self.geometry:
+            for segment in path.segments:
+                segment.applyTransform(self.transform)
         self.transform = Transform() # reset transformation
+
+    def start(self) -> complex:
+        return self.geometry[0].start()
+
+    def end(self) -> complex:
+        return self.geometry[-1].end()
+
+    # only true for a single closed loop
+    def isClosed(self) -> bool:
+        return len(self.geometry) == 1 and self.geometry[0].isClosed()
+
+    def vertices(self) -> list[complex]:
+        if not self.isClosed():
+            raise ValueError("PathObject.vertices() is not valid on multi-subpath or open objects")
+        return self.geometry[0].vertices()
+
+    def rotateTo(self, index: int):
+        if not self.isClosed():
+            raise ValueError("PathObject.rotateTo() is not valid on multi-subpath or open objects")
+        self.geometry[0].rotateTo(index)
+
+    # reverses the whole object: subpath order and each subpath's own direction
+    def reverse(self):
+        self.geometry.reverse()
+        for path in self.geometry:
+            path.reverse()
+
+    def bounds(self) -> tuple[float, float, float, float]:
+        bounds = (math.inf, math.inf, -math.inf, -math.inf)
+        for path in self.geometry:
+            pathBounds = path.bounds()
+            bounds = (min(bounds[0], pathBounds[0]), min(bounds[1], pathBounds[1]), max(bounds[2], pathBounds[2]), max(bounds[3], pathBounds[3]))
+        return bounds
 
 # overall document
 class Document:
@@ -563,7 +597,7 @@ class Document:
     def bounds(self) -> tuple[float, float, float, float]:
         bounds = (math.inf, math.inf, -math.inf, -math.inf)
         for object in self.objects:
-            segmentBounds = object.geometry.bounds()
+            segmentBounds = object.bounds()
             bounds = (min(bounds[0], segmentBounds[0]), min(bounds[1], segmentBounds[1]), max(bounds[2], segmentBounds[2]), max(bounds[3], segmentBounds[3]))
         return bounds
 
@@ -759,25 +793,27 @@ class Plotter:
                 self.addLine({"G": "1", "X": str(pos.real), "Y": str(pos.imag), "E": math.hypot(pos.real-self.pos["X"], pos.imag-self.pos["Y"])}, file, lineType or State.DRAW)
 
     def addPath(self, object: PathObject, file: TextIO, raised: bool = False):
-        tessellated = object.geometry.tessellate(self.settings.tessellationTolerance, self.settings.maxTessellationDepth)
-        for segment in tessellated.segments:
-            if isinstance(segment, Line):
-                self.penMove(segment.start, file, True, raised=raised)
-                self.penMove(segment.end, file, raised=raised)
-            elif isinstance(segment, Arc):
-                self.penMove(segment.point(0), file, True, raised=raised)
-                centerOffset = segment.center - segment.point(0)
-                end = segment.point(1)
-                params = {"G": "2", "X": end.real, "Y": end.imag, "I": centerOffset.real, "J": centerOffset.imag, "E": segment.length()}
-                if segment.sweep < 0:
-                    params["G"] = "3"
-                self.addLine(params, file, State.DRAW)
-            else:
-                print(f"Unknown path type {type(segment)}")
+        for path in object.geometry:
+            tessellated = path.tessellate(self.settings.tessellationTolerance, self.settings.maxTessellationDepth)
+            for segment in tessellated.segments:
+                if isinstance(segment, Line):
+                    self.penMove(segment.start, file, True, raised=raised)
+                    self.penMove(segment.end, file, raised=raised)
+                elif isinstance(segment, Arc):
+                    self.penMove(segment.point(0), file, True, raised=raised)
+                    centerOffset = segment.center - segment.point(0)
+                    end = segment.point(1)
+                    params = {"G": "2", "X": end.real, "Y": end.imag, "I": centerOffset.real, "J": centerOffset.imag, "E": segment.length()}
+                    if segment.sweep < 0:
+                        params["G"] = "3"
+                    self.addLine(params, file, State.DRAW)
+                else:
+                    print(f"Unknown path type {type(segment)}")
         if self.settings.showBoundingBoxes:
-            for segment in object.geometry.segments:
-                self._moveRect(segment.bounds(), file, State._SEGMENT_BOUNDS)
-            self._moveRect(object.geometry.bounds(), file, State._PATH_BOUNDS)
+            for path in object.geometry:
+                for segment in path.segments:
+                    self._moveRect(segment.bounds(), file, State._SEGMENT_BOUNDS)
+            self._moveRect(object.bounds(), file, State._PATH_BOUNDS)
 
     def createFile(self, geom: Document, fileOut: str):
         try:
@@ -859,15 +895,25 @@ def parseSvgElement(node: svgelements.SVGElement, docTransform: Transform, docum
         temp = PathObject(str(node.id)) # str() to make pylance happy
         temp.style = readStyle(node)
         temp.transform = nodeTransform
+        temp.geometry = [] # built explicitly below so each Move starts a new subpath
 
         current: complex = 0
         start = None
+        currentSegments: list[Segment] = []
+
+        # finalize supath when segments are collected
+        def finalizeSubpath():
+            if currentSegments:
+                temp.geometry.append(Path(currentSegments.copy()))
+
         for part in node:
             if isinstance(part, svgelements.Move):
+                finalizeSubpath()
+                currentSegments = []
                 start = part.end
                 current = part.end
             elif isinstance(part, svgelements.Line):
-                temp += Line(current, part.end)
+                currentSegments.append(Line(current, part.end))
                 current = part.end
             elif isinstance(part, svgelements.Arc):
                 u = part.prx - part.center # type: ignore
@@ -878,18 +924,21 @@ def parseSvgElement(node: svgelements.SVGElement, docTransform: Transform, docum
                 alpha = (r.real*v.imag - r.imag*v.real) / det # type: ignore
                 beta = (u.real*r.imag - u.imag*r.real) / det # type: ignore
 
-                temp += Arc(part.center, u, v, math.atan2(beta, alpha), part.sweep) # type: ignore
+                currentSegments.append(Arc(part.center, u, v, math.atan2(beta, alpha), part.sweep)) # type: ignore
             elif isinstance(part, svgelements.QuadraticBezier):
-                temp += QuadraticBezier(current, part.control, part.end)
+                currentSegments.append(QuadraticBezier(current, part.control, part.end))
                 current = part.end
             elif isinstance(part, svgelements.CubicBezier):
-                temp += CubicBezier(current, part.control1, part.control2, part.end)
+                currentSegments.append(CubicBezier(current, part.control1, part.control2, part.end))
                 current = part.end
             elif isinstance(part, svgelements.Close):
-                temp += Line(current, start)
+                currentSegments.append(Line(current, start))
                 current = start
             else:
                 print(f"Unknown path element: {type(part)} (part of {node.id})")
+        finalizeSubpath()
+        if not temp.geometry: # check for empty paths
+            temp.geometry = [Path()]
         document.add(temp)
     elif isinstance(node, svgelements.Group):
         for child in node:
@@ -924,30 +973,30 @@ def parseSvg(svgPath: str, dimensions: complex, offset: complex) -> Document:
 
 #region routing
 
-# reorders the paths in document.objects to minimize travel distance
+# reorders the paths in items to minimize travel distance
+# if startPos/endPos are None, the solution will end at any position
 # open paths will be reversed as needed
 # closed paths will be entered/exited at any of their vertices
 # a stock TSP solver is not applicable here because paths can be altered
-# this converges in under a second with a few hundred objects
-def orderPaths(document: Document, startPos: complex = 0, endPos: complex = 0):
-    objects = document.objects
-    n = len(objects)
+# this converges in under a second with a few hundred paths
+def _orderSequence(items: list, startPos: complex | None, endPos: complex | None) -> list:
+    n = len(items)
     if n <= 1:
-        return
+        return items
 
     starts: list[complex] = []
     ends: list[complex] = []
     closed: list[bool] = []
     vertices: list[list[complex]] = []
-    for obj in objects:
-        starts.append(obj.geometry.start())
-        ends.append(obj.geometry.end())
-        isClosed = obj.geometry.isClosed()
+    for item in items:
+        starts.append(item.start())
+        ends.append(item.end())
+        isClosed = item.isClosed()
         closed.append(isClosed)
-        vertices.append(obj.geometry.vertices() if isClosed else [])
+        vertices.append(item.vertices() if isClosed else [])
 
-    rev = [False] * n # whether open path i is currently drawn end->start
-    anchor = [0] * n # for closed path i, index into vertices[i] of the chosen entry/exit point
+    rev = [False] * n # whether open item i is currently drawn end->start
+    anchor = [0] * n # for closed item i, index into vertices[i] of the chosen entry/exit point
 
     def startPt(i: int) -> complex:
         if closed[i]:
@@ -959,10 +1008,25 @@ def orderPaths(document: Document, startPos: complex = 0, endPos: complex = 0):
             return vertices[i][anchor[i]]
         return starts[i] if rev[i] else ends[i]
 
-    # nearest-neighbor construction
+    # total pen-up travel for the current `order`/`rev` and a given anchor assignment
+    def tourCost(anchorArr: list[int]) -> float:
+        def sp(i: int) -> complex:
+            return vertices[i][anchorArr[i]] if closed[i] else (ends[i] if rev[i] else starts[i])
+        def ep(i: int) -> complex:
+            return vertices[i][anchorArr[i]] if closed[i] else (starts[i] if rev[i] else ends[i])
+        total = 0.0
+        if startPos is not None:
+            total += abs(startPos - sp(order[0]))
+        for idx in range(n-1):
+            total += abs(ep(order[idx]) - sp(order[idx+1]))
+        if endPos is not None:
+            total += abs(ep(order[-1]) - endPos)
+        return total
+
+    # nearest-neighbor construction (free start just seeds from the first item)
     remaining = set(range(n))
     order: list[int] = []
-    current = startPos
+    current = startPos if startPos is not None else starts[0]
     while remaining:
         def closestDist(i: int) -> float:
             if closed[i]:
@@ -984,13 +1048,17 @@ def orderPaths(document: Document, startPos: complex = 0, endPos: complex = 0):
 
         # 2-opt: try reversing every possible run of the tour
         for i in range(n):
-            leftPrev = startPos if i == 0 else endPt(order[i-1])
+            leftPrev = startPos if i == 0 else endPt(order[i-1]) # None only when i==0 and startPos is None
             for j in range(i, n):
-                oldLeft = abs(leftPrev - startPt(order[i]))
-                oldRight = abs(endPt(order[j]) - endPos) if j == n-1 else abs(endPt(order[j]) - startPt(order[j+1]))
+                oldLeft = 0.0 if leftPrev is None else abs(leftPrev - startPt(order[i]))
+                newLeft = 0.0 if leftPrev is None else abs(leftPrev - endPt(order[j])) # order[j] reversed becomes the new start
 
-                newLeft = abs(leftPrev - endPt(order[j])) # order[j] reversed becomes the new start
-                newRight = abs(startPt(order[i]) - endPos) if j == n-1 else abs(startPt(order[i]) - startPt(order[j+1])) # order[i] reversed becomes the new end
+                if j == n-1:
+                    oldRight = 0.0 if endPos is None else abs(endPt(order[j]) - endPos)
+                    newRight = 0.0 if endPos is None else abs(startPt(order[i]) - endPos) # order[i] reversed becomes the new end
+                else:
+                    oldRight = abs(endPt(order[j]) - startPt(order[j+1]))
+                    newRight = abs(startPt(order[i]) - startPt(order[j+1]))
 
                 if newLeft + newRight < oldLeft + oldRight - 1e-9:
                     order[i:j+1] = reversed(order[i:j+1])
@@ -998,28 +1066,67 @@ def orderPaths(document: Document, startPos: complex = 0, endPos: complex = 0):
                         rev[order[k]] = not rev[order[k]]
                     improved = True
 
-        # anchor optimization: for each closed path, try every vertex as the entry/exit point
+        # anchor optimization: for each closed item, try every vertex as the entry/exit point
         for i in range(n):
-            objIdx = order[i]
-            if not closed[objIdx]:
+            itemIdx = order[i]
+            if not closed[itemIdx]:
                 continue
-            leftNeighbor = startPos if i == 0 else endPt(order[i-1])
-            rightNeighbor = endPos if i == n-1 else startPt(order[i+1])
+            leftNeighbor = startPos if i == 0 else endPt(order[i-1]) # None only when i==0 and startPos is None
+            rightNeighbor = endPos if i == n-1 else startPt(order[i+1]) # None only when i==n-1 and endPos is None
 
             def anchorCost(v: complex) -> float:
-                return abs(leftNeighbor-v) + abs(v-rightNeighbor)
+                cost = 0.0
+                if leftNeighbor is not None:
+                    cost += abs(leftNeighbor-v)
+                if rightNeighbor is not None:
+                    cost += abs(v-rightNeighbor)
+                return cost
 
-            bestK = min(range(len(vertices[objIdx])), key=lambda k: anchorCost(vertices[objIdx][k]))
-            if bestK != anchor[objIdx] and anchorCost(vertices[objIdx][bestK]) < anchorCost(vertices[objIdx][anchor[objIdx]]) - 1e-9:
-                anchor[objIdx] = bestK
+            bestK = min(range(len(vertices[itemIdx])), key=lambda k: anchorCost(vertices[itemIdx][k]))
+            if bestK != anchor[itemIdx] and anchorCost(vertices[itemIdx][bestK]) < anchorCost(vertices[itemIdx][anchor[itemIdx]]) - 1e-9:
+                anchor[itemIdx] = bestK
+                improved = True
+
+        # rendezvous move: the anchor optimization above is coordinate descent (one
+        # anchor at a time vs. its current neighbors), so it can't relocate a group of
+        # closed paths that should all be entered/exited near a shared point - that
+        # needs several anchors to move together (e.g. concentric infill loops sharing
+        # a seam, or the near-coincident double outline of a traced shape). try snapping
+        # every closed path's anchor to a common rendezvous point and keep it only if
+        # the whole tour gets shorter. candidate rendezvous points are the vertices of
+        # the smallest closed path - the loop that most constrains where the group can
+        # meet
+        closedIdxs = [i for i in range(n) if closed[i]]
+        if len(closedIdxs) >= 2:
+            smallest = min(closedIdxs, key=lambda i: len(vertices[i]))
+            bestCost, bestAnchor = tourCost(anchor), None
+            for r in vertices[smallest]:
+                trial = anchor.copy()
+                for i in closedIdxs:
+                    trial[i] = min(range(len(vertices[i])), key=lambda k: abs(vertices[i][k] - r))
+                c = tourCost(trial)
+                if c < bestCost - 1e-9:
+                    bestCost, bestAnchor = c, trial
+            if bestAnchor is not None:
+                anchor = bestAnchor
                 improved = True
 
     for i in range(n):
         if closed[i]:
-            objects[i].geometry.rotateTo(anchor[i])
+            items[i].rotateTo(anchor[i])
         elif rev[i]:
-            objects[i].geometry.reverse()
-    document.objects = [objects[i] for i in order]
+            items[i].reverse()
+    return [items[i] for i in order]
+
+# reorders document.objects (and each object's own sub-paths) to minimize travel distance
+def orderPaths(document: Document, startPos: complex = 0, endPos: complex = 0):
+    # hendled in 2 passes to reduce runtime
+    # pass 1: object subpath order
+    for obj in document.objects:
+        if len(obj.geometry) > 1:
+            obj.geometry = _orderSequence(obj.geometry, None, None)
+    # pass 2: object order
+    document.objects = _orderSequence(document.objects, startPos, endPos)
 
 #endregion routing
 
