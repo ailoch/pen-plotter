@@ -5,8 +5,10 @@ plotter (the extruder holds a pen instead of printing filament).
 
 ## Entry point
 
-[`_Process.py`](_Process.py) is the whole program — a single script, run top-to-bottom
-(no `if __name__ == "__main__"` guard, no CLI args yet):
+[`_Process.py`](_Process.py) is a thin run script, executed top-to-bottom (no
+`if __name__ == "__main__"` guard, no CLI args yet) — the underscore keeps it sorted to
+the top of the file explorer. It just imports from [`lib/`](lib/) (see "Files" below)
+and runs the pipeline:
 
 ```python
 plotter = Plotter("settings.json")
@@ -16,13 +18,18 @@ plotter.createFile(document, fileOut)
 input()  # keeps the console window open
 ```
 
-`fileIn`/`fileOut` are hardcoded near the top of the file (`_Process.py:17-18`) —
-currently `testDrawing.svg` -> `testDrawing.gcode`. Change these by hand to process a
-different drawing (user wants to eventually prompt for these instead).
+`fileIn`/`fileOut` are hardcoded in `_Process.py` itself — currently `testDrawing.svg`
+-> `testDrawing.gcode`. Change these by hand to process a different drawing (user wants
+to eventually prompt for these instead).
+
+All the actual logic lives in `lib/`, a plain import-safe package (no module-level
+execution) — `import lib.route` etc. works with no side effects, which is how this
+project's ad-hoc tests exercise the pipeline (parse → route → generate gcode) without
+triggering a real run.
 
 ## Pipeline
 
-1. **Parse** (`parseSvg` / `parseSvgElement`, `_Process.py:775` region "parseSvg")
+1. **Parse** (`parseSvg` / `parseSvgElement`, [`lib/svgparse.py`](lib/svgparse.py))
    - Uses the `svgelements` library to parse the SVG.
    - Walks the SVG tree recursively (groups, paths, rects, circles/ellipses),
      converting each into a `PathObject` made of `Segment`s (`Line`, `Arc`,
@@ -46,7 +53,7 @@ different drawing (user wants to eventually prompt for these instead).
      connecting unrelated loops).
    - Text, defs, and other non-geometry nodes are ignored with a printed warning.
 
-2. **Geometry model** (region "shapeDefs", `_Process.py:20-441`)
+2. **Geometry model** ([`lib/geometry.py`](lib/geometry.py))
    - `Segment` (ABC) → `Line`, `Arc`, `QuadraticBezier`, `CubicBezier`. Each knows its
      own `length()`, `point(t)`, `derivative(t)`, `extrema()`, `bounds()`, and
      `tessellate(tolerance, maxDepth)` (returns a list of `Line`/circular-`Arc`
@@ -79,7 +86,7 @@ different drawing (user wants to eventually prompt for these instead).
      SVG's `matrix()`), supporting translate/scale/rotate/skew/flip and composition via
      `@`/`@=` (SVG-order) and `*`/`*=` (reverse order).
 
-3. **Path ordering / routing** (`orderPaths`/`_orderSequence`, region "routing",
+3. **Path ordering / routing** (`orderPaths`/`_orderSequence`, [`lib/route.py`](lib/route.py),
    called between `parseSvg` and `plotter.createFile`)
    - `_orderSequence(items, startPos, endPos)` is the actual routing algorithm,
      generalized to work on *any* list of items exposing `start()`/`end()`/
@@ -127,7 +134,7 @@ different drawing (user wants to eventually prompt for these instead).
    - Fast enough for the stated scale (200-300 objects, well under a second) without
      needing an external TSP/routing library.
 
-4. **Gcode generation** (`Plotter` class, `_Process.py:517` region)
+4. **Gcode generation** (`Plotter` class, [`lib/plot.py`](lib/plot.py))
    - `addPath` loops over each subpath in `object.geometry`, calling
      `path.tessellate(tessellationTolerance, maxTessellationDepth)` to reduce it to
      only `Line`/circular-`Arc` segments (adaptive — see "Adaptive tessellation"
@@ -186,9 +193,9 @@ bends get many.
 
 ## Settings (`settings.json`, loaded via `commentjson` so `//` comments are allowed)
 
-Loaded into `PlotSettings` (`_Process.py:443`) by `initFromJson`, which validates
-setting names against the dataclass fields and prints a warning for anything unknown
-(no full type-checking yet — see `#TODO`).
+Loaded into `PlotSettings` ([`lib/plot.py`](lib/plot.py)) by `initFromJson`, which
+validates setting names against the dataclass fields and prints a warning for anything
+unknown (no full type-checking yet — see `#TODO`).
 
 - `machine`: `startPos` (nozzle X/Y/Z home), `penOffset` (pen vs. nozzle, since the pen
   is mounted offset from where the nozzle would be), `plateSize` (256x256 for P1S),
@@ -202,7 +209,7 @@ setting names against the dataclass fields and prints a warning for anything unk
   seconds to wait for the user to load the pen, `showPenPos` toggle,
   `objectHeightChange` toggle for alternating +0.001mm Z per object so Bambu Studio's
   preview shows each object as a separate layer, and the `style`/`styleLineOrder`
-  coloring scheme described in the comments in `_Process.py:568-588`).
+  coloring scheme described in the comments in `Plotter.addLine`, `lib/plot.py`).
 - `debug`: `showBoundingBoxes` — draws segment/path/document bounding rectangles in
   the output for visual debugging (as `_SEGMENT_BOUNDS`/`_PATH_BOUNDS`/
   `_DOCUMENT_BOUNDS` pseudo-states).
@@ -216,7 +223,7 @@ setting names against the dataclass fields and prints a warning for anything unk
 - Pen is mounted with an offset from the nozzle (`penOffset`), so all geometry is
   shifted after the SVG's own Y-flip.
 - Bambu Studio's renderer breaks on very large coordinates, so `Segment.bounds()`
-  clamps to `[-5000, 5256]` (`_Process.py:172`).
+  clamps to `[-5000, 5256]` (`lib/geometry.py`).
 - `Append/startCode.gcode` / `endCode.gcode` are real Bambu Studio start/end gcode
   (home, bed leveling skip, fan/temp no-ops, motor current tweaks) with placeholders
   swapped in; they were renamed from `startcode`/`endcode` because `commentjson`
@@ -239,9 +246,21 @@ setting names against the dataclass fields and prints a warning for anything unk
 
 ## Files
 
-- `_Process.py` — the whole pipeline (parse SVG → geometry model → gcode).
-- `settings.json` — machine/gcode/visualization/debug config, loaded at the bottom of
-  `_Process.py`.
+- `_Process.py` — entry point: hardcoded `fileIn`/`fileOut`, then the run sequence
+  (`parseSvg` → `orderPaths` → `plotter.createFile`). No pipeline logic of its own.
+- `lib/` — the actual pipeline, split so each module only depends on `geometry` (a DAG,
+  no cycles) and so the pipeline stages are independently testable via plain imports:
+  - `lib/geometry.py` — `Style`, `Transform`, `Segment`+subclasses (`Line`, `Arc`,
+    `QuadraticBezier`, `CubicBezier`), `Path`, `PathObject`, `Document`. Depends on
+    nothing else in `lib/`.
+  - `lib/plot.py` — `State`, `PlotSettings`, `Plotter` (gcode generation/I/O). `State`
+    lives here rather than in `geometry.py` because it's used exclusively for plotting
+    (heights/speeds/accels/lineTypes keys, `; FEATURE:` selection) — nothing about it is
+    a geometry concern.
+  - `lib/svgparse.py` — `parseSvg`/`parseSvgElement`/`readStyle`: SVG → `Document`.
+  - `lib/route.py` — `orderPaths`/`_orderSequence`: the routing/ordering algorithm.
+- `settings.json` — machine/gcode/visualization/debug config, loaded by
+  `PlotSettings.initFromJson` (`lib/plot.py`).
 - `Append/startCode.gcode`, `Append/endCode.gcode` — prefix/suffix gcode templates.
-- `*.svg` (`horse.svg`, `test2.svg`) — sample input drawings.
+- `*.svg` (`horse.svg`, `horseSmall.svg`, `test2.svg`) — sample input drawings.
 - `*.gcode` (`horse.gcode`, `testDrawing.gcode`) — generated output, not source of truth.

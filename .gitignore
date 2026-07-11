@@ -1,5 +1,5 @@
 *.gcode
 *.svg
 !testDrawing.svg
-!Append/startCode.gcode
-!Append/endCode.gcode
+!Append/*.gcode
+__pycache__/
