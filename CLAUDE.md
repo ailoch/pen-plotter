@@ -58,6 +58,24 @@ triggering a real run.
      fill presence (`values.get("fill") == "none"` ⇒ `Style.fillColor = None`) and
      fill-rule (`values.get("fill-rule", "nonzero")`) — see "Infill generation" below.
    - Text, defs, and other non-geometry nodes are ignored with a printed warning.
+   - **`svgelements` has no real type stubs.** Unlike `pyclipper` (a compiled
+     extension with *no* source for Pylance to inspect at all), `svgelements` is
+     pure Python, so Pylance tries to infer attribute types directly from its
+     source — but that source initializes attributes like `Rect.x`/`Circle.cx`/
+     `Arc.center` to `None` in `__init__` and then reassigns them through several
+     untyped, dynamic code paths (`property_by_object`, `property_by_values`,
+     etc.), so Pylance lands on a messy `Unknown | None` for nearly every
+     geometric attribute. A hand-written `.pyi` stub isn't practical here (the
+     library is ~9,700 lines across ~40 classes). Instead, `parseSvgElement`
+     wraps each such access in `typing.cast()` (e.g. `cast(float, node.x)`,
+     `cast(complex, part.center)`) — a zero-runtime-cost, type-checker-only
+     annotation that documents the true type without swallowing errors on the
+     rest of the line the way a blanket `# type: ignore` would. The `complex`
+     casts rely on svgelements' own `Point` class implementing the same
+     `.real`/`.imag`/arithmetic protocol `complex` does (by its own docstring,
+     as a drop-in replacement) — this codebase already relied on that duck
+     typing before the casts existed; `cast()` just makes it explicit instead of
+     silently smuggling a `Point` through as `complex`.
 
 2. **Geometry model** ([`lib/geometry.py`](lib/geometry.py))
    - `Segment` (ABC) → `Line`, `Arc`, `QuadraticBezier`, `CubicBezier`. Each knows its
@@ -141,18 +159,59 @@ triggering a real run.
      `JT_ROUND` caused spurious arcs on `horse.svg`'s legs turned out to be wrong
      (see "Arc recovery" below).
    - **Arc recovery**: pyclipper's offset output is plain polylines, so
-     `_fitPointsToTolerance`/`_loopToPath` re-fit each loop back to `Line`/`Arc`
-     segments (mirroring `Segment._fitToTolerance`, but operating on a discrete point
-     list rather than a continuous `point(t)`) so a circular fill's loops come back
-     out as a couple of `G2`/`G3` arcs instead of a many-sided polygon of `G1`s.
-     Corners must be detected first (`_findCornerIndices`, turning angle >
-     `_CORNER_ANGLE_THRESHOLD`) and never fit across: unlike the continuous
-     tessellator, which only ever fits *within* one already-smooth original segment,
-     this fitter starts from an undifferentiated flat point list — and any 3
-     non-collinear points define *some* circumcircle, so a large-radius one can
-     closely hug two straight edges meeting at a gentle angle if corners aren't
-     excluded first (found via `testDrawing.svg`'s `triangle`, which has 3 sharp
-     corners plus one genuinely curved edge — a good regression case for this).
+     `_fitPointsToTolerance`/`_loopToPath` (via the shared `_tryFit` helper) re-fit
+     each loop back to `Line`/`Arc` segments (mirroring `Segment._fitToTolerance`,
+     but operating on a discrete point list rather than a continuous `point(t)`) so
+     a circular fill's loops come back out as a couple of `G2`/`G3` arcs instead of
+     a many-sided polygon of `G1`s. Corners must be detected first
+     (`_findCornerIndices`, turning angle > `_CORNER_ANGLE_THRESHOLD`) and never fit
+     across: unlike the continuous tessellator, which only ever fits *within* one
+     already-smooth original segment, this fitter starts from an undifferentiated
+     flat point list — and any 3 non-collinear points define *some* circumcircle, so
+     a large-radius one can closely hug two straight edges meeting at a gentle angle
+     if corners aren't excluded first (found via `testDrawing.svg`'s `triangle`,
+     which has 3 sharp corners plus one genuinely curved edge — a good regression
+     case for this; `triangle` still has a related, unfixed instance of this same
+     bug class when a run mixes a straight edge with a genuinely curved one, not
+     just a small rounded fillet — see the spawned follow-up task).
+   - **`_tryFit`'s midpoint safety check**: a candidate Line/Arc is validated not
+     just against the points pyclipper actually gave it, but also against the
+     midpoint of every *consecutive* pair of those points. pyclipper always
+     connects consecutive points with a literal straight sub-edge (a polygon's
+     straight edges are only ever given as their two sparse endpoints; curves are
+     represented by densely sampling many points, never by hidden curvature inside
+     one edge), so this check is free (always valid) and catches a real bug: a
+     long, sparsely-sampled straight edge next to a tiny, densely-sampled
+     `JT_ROUND` fillet at a reflex corner gave the old deviation checks nothing to
+     fail on — a circumcircle threading through the two far polygon vertices and
+     the fillet cluster could satisfy tolerance against every *given* point while
+     still cutting several mm across the middle of what should be a straight edge.
+     Confirmed empirically on `testDrawing.svg`'s `nonzeroFill`: a spurious
+     18.8mm-radius arc deviated 2mm from the true edge at its unsampled midpoint.
+   - **`_fitPointsToTolerance`'s galloping search**: greedily consumes the largest
+     prefix of the remaining points that still fits a single Line/Arc, rather than
+     blindly bisecting the remaining range in half whenever the whole thing
+     doesn't fit. For a curve with genuinely varying curvature (e.g. an ellipse —
+     unlike a circle, where any 3 points define exactly the right circle), naive
+     halving converges to many tiny `Line`s well before it reaches the true
+     tolerance-limited extent of a good `Arc`, since each half that still fails
+     just gets bisected again regardless of where the real boundary is (this made
+     `filledEllipse`'s infill mostly straight `G1`s even on its more-curved
+     regions). The largest valid prefix is found via exponential ("galloping")
+     search — try 2, 4, 8, ... points, doubling — followed by a binary search
+     between the last successful size and the first failed one, rather than a
+     single binary search across the *full* remaining range every step: when most
+     accepted segments end up short (common in practice), a plain binary search's
+     first probe against the full remaining range is wasted work on every outer
+     step, making the whole pass `O(n²)` (measured: infill generation on
+     `horse.svg` went from 0.88s to 13.27s with a naive full-range binary search).
+     Galloping keeps each step's cost proportional to the segment size actually
+     found, restoring `O(n)`-amortized behavior (0.88s → 1.69s, the remainder
+     being genuinely more/better-placed arcs, not overhead). This also means
+     `_fitPointsToTolerance`/`_loopToPath` no longer take a `maxDepth` — each outer
+     step is guaranteed to consume at least one new point (a 2-point range always
+     fits), so termination doesn't need a recursion-depth safety net the way the
+     continuous fitter's `maxDepth` does.
    - Gated by `isFillable()` (`lib/geometry.py`), not `isClosed()` — see the
      `Path.isFillable()` entry above.
    - **Known non-bug**: `horse.svg`'s front legs show short alternating `Line`/`Arc`
