@@ -1,4 +1,5 @@
 import math
+from typing import cast
 import svgelements
 
 from lib.geometry import Style, Transform, Segment, Line, Arc, QuadraticBezier, CubicBezier, Path, PathObject, Document
@@ -25,11 +26,15 @@ def parseSvgElement(node: svgelements.SVGElement, docTransform: Transform, docum
         temp.style = readStyle(node)
         temp.transform = nodeTransform
 
-        # pylance seems to think node.x and node.y are None (they are actually floats)
-        xmin = node.x
-        xmax = node.x + node.width # type: ignore
-        ymin = node.y * 1j # type: ignore
-        ymax = (node.y + node.height) * 1j # type: ignore
+        x = cast(float, node.x) # cast() tells linters the correct type without affecting runtime
+        y = cast(float, node.y)
+        width = cast(float, node.width)
+        height = cast(float, node.height)
+
+        xmin = x
+        xmax = x + width
+        ymin = y * 1j
+        ymax = (y + height) * 1j
         temp += Line(xmin+ymin, xmin+ymax)
         temp += Line(xmin+ymax, xmax+ymax)
         temp += Line(xmax+ymax, xmax+ymin)
@@ -40,8 +45,13 @@ def parseSvgElement(node: svgelements.SVGElement, docTransform: Transform, docum
         temp.style = readStyle(node)
         temp.transform = nodeTransform
 
-        center = node.cx + node.cy*1j # type: ignore
-        temp += Arc(center, node.rx, node.ry * 1j) # type: ignore
+        cx = cast(float, node.cx)
+        cy = cast(float, node.cy)
+        rx = cast(float, node.rx)
+        ry = cast(float, node.ry)
+
+        center = cx + cy*1j
+        temp += Arc(center, rx, ry * 1j)
         document.add(temp)
     elif isinstance(node, svgelements.Path):
         temp = PathObject(str(node.id)) # str() to make pylance happy
@@ -68,15 +78,28 @@ def parseSvgElement(node: svgelements.SVGElement, docTransform: Transform, docum
                 currentSegments.append(Line(current, part.end))
                 current = part.end
             elif isinstance(part, svgelements.Arc):
-                u = part.prx - part.center # type: ignore
-                v = part.pry - part.center # type: ignore
-                r = part.start - part.center
+                # svgelements represents this in its own Point class rather than a
+                # builtin complex - Point implements the same .real/.imag/arithmetic
+                # protocol complex does (by design, per its own docstring, as a
+                # drop-in replacement), so this codebase treats the two
+                # interchangeably; cast() documents that instead of suppressing the
+                # whole line, and (unlike # type: ignore) still lets every other
+                # expression on these lines be checked normally
+                arcCenter = cast(complex, part.center)
+                arcStart = cast(complex, part.start)
+                prx = cast(complex, part.prx)
+                pry = cast(complex, part.pry)
+                sweep = cast(float, part.sweep)
 
-                det = u.real*v.imag - u.imag*v.real # type: ignore
-                alpha = (r.real*v.imag - r.imag*v.real) / det # type: ignore
-                beta = (u.real*r.imag - u.imag*r.real) / det # type: ignore
+                u = prx - arcCenter
+                v = pry - arcCenter
+                r = arcStart - arcCenter
 
-                currentSegments.append(Arc(part.center, u, v, math.atan2(beta, alpha), part.sweep)) # type: ignore
+                det = u.real*v.imag - u.imag*v.real
+                alpha = (r.real*v.imag - r.imag*v.real) / det
+                beta = (u.real*r.imag - u.imag*r.real) / det
+
+                currentSegments.append(Arc(arcCenter, u, v, math.atan2(beta, alpha), sweep))
             elif isinstance(part, svgelements.QuadraticBezier):
                 currentSegments.append(QuadraticBezier(current, part.control, part.end))
                 current = part.end
