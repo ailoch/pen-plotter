@@ -13,6 +13,7 @@ and runs the pipeline:
 ```python
 plotter = Plotter("settings.json")
 document = parseSvg(fileIn, ...)
+generateInfill(document, ...)  # add concentric infill loops to filled shapes
 orderPaths(document, ...)  # reorder for minimal pen-up travel
 plotter.createFile(document, fileOut)
 input()  # keeps the console window open
@@ -51,25 +52,48 @@ triggering a real run.
      first, populating `PathObject.geometry` with one entry per subpath (previously
      all subpaths were merged into one continuous `Path`, which drew a spurious line
      connecting unrelated loops).
+   - `readStyle` reads `stroke_width` plus, via svgelements' raw `element.values`
+     dict (which resolves inherited/cascaded properties — e.g. `horse.svg`'s fill is
+     set on the root `<svg>`, not the path itself, and still resolves correctly),
+     fill presence (`values.get("fill") == "none"` ⇒ `Style.fillColor = None`) and
+     fill-rule (`values.get("fill-rule", "nonzero")`) — see "Infill generation" below.
    - Text, defs, and other non-geometry nodes are ignored with a printed warning.
 
 2. **Geometry model** ([`lib/geometry.py`](lib/geometry.py))
    - `Segment` (ABC) → `Line`, `Arc`, `QuadraticBezier`, `CubicBezier`. Each knows its
      own `length()`, `point(t)`, `derivative(t)`, `extrema()`, `bounds()`, and
-     `tessellate(tolerance, maxDepth)` (returns a list of `Line`/circular-`Arc`
-     segments approximating itself within `tolerance` mm — see "Adaptive
-     tessellation" below).
+     `tessellate(tolerance, maxDepth, allowArcs=True)` (returns a list of
+     `Line`/circular-`Arc` segments approximating itself within `tolerance` mm —
+     see "Adaptive tessellation" below; `allowArcs=False` forces a Lines-only
+     result, used by infill generation since pyclipper only understands straight
+     polygons). `Arc` additionally has `toPoints(tolerance)`, which samples itself
+     into points fine enough that none deviates from the true circle by more than
+     `tolerance` (a fixed angular step derived from the chord's sagitta) — used
+     both by `tessellate(allowArcs=False)` and directly by infill generation.
+   - `Style` = `strokeWidth` (unused for output) + `fillColor` (`None` means SVG
+     `fill:none` — no infill; a color, currently just presence not the actual RGB,
+     means filled) + `fillRule` (`"nonzero"` or `"evenodd"`, read from the SVG
+     `fill-rule` property — see "Infill generation" below).
    - `Path` = list of segments, with `start()`/`end()`, `isClosed()` (start ≈ end
-     within a tolerance), `vertices()` (the point between every pair of consecutive
+     within a tolerance), `isFillable()` (encloses non-zero area — deliberately
+     *separate* from `isClosed()`: an open path can still enclose area via SVG's
+     implicit fill closure, and a closed path can enclose zero area, e.g. a
+     degenerate out-and-back trace; computed via the shoelace formula over each
+     segment sampled at several points, not raw `vertices()`, so a full-circle `Arc`
+     — whose start and end coincide — is measured correctly instead of collapsing to
+     a single point), `vertices()` (the point between every pair of consecutive
      segments — i.e. every candidate place the pen could enter/exit without changing
      the drawn shape; includes the final endpoint too for open paths),
      `rotateTo(index)` (re-splits a *closed* path so `segments[index]` is drawn
      first — raises if the path isn't closed, since re-splitting an open path would
-     change its shape), and `tessellate(tolerance, maxDepth)` (non-mutating —
-     concatenates each segment's own `tessellate()` into a new `Path`).
-     `PathObject` = a `list[Path]` + `Style` (stroke width/color, currently unused
-     for output) + `Transform`. Almost always one `Path` (one `<rect>`/`<circle>`/
-     `<ellipse>`, or one simple `<path>`), but more than one for a compound `<path>`
+     change its shape), `tessellate(tolerance, maxDepth, allowArcs=True)` (non-mutating
+     — concatenates each segment's own `tessellate()` into a new `Path`), and the
+     classmethod `fromPoints(points, closed=False)` (builds a single-subpath `Path`
+     of `Line`s connecting the given points, closing back to the first if `closed`).
+     `PathObject` = a `list[Path]` + `Style` (fill presence/rule drive infill; stroke
+     width/color still unused for output) + `Transform`. Almost always one `Path`
+     (one `<rect>`/`<circle>`/`<ellipse>`, or one simple `<path>`), but more than
+     one for a compound `<path>`
      (see the parsing gotcha above) — all subpaths of one `PathObject` are
      considered part of the same logical object for routing/infill purposes.
      `PathObject` mirrors `Path`'s own interface (`start()`/`end()`/`isClosed()`/
@@ -86,8 +110,62 @@ triggering a real run.
      SVG's `matrix()`), supporting translate/scale/rotate/skew/flip and composition via
      `@`/`@=` (SVG-order) and `*`/`*=` (reverse order).
 
-3. **Path ordering / routing** (`orderPaths`/`_orderSequence`, [`lib/route.py`](lib/route.py),
-   called between `parseSvg` and `plotter.createFile`)
+3. **Infill generation** (`generateInfill`, [`lib/infill.py`](lib/infill.py), called
+   right after `parseSvg`, before routing — requires `pip install pyclipper`)
+   - For every `PathObject` with `style.fillColor is not None`, generates nested
+     inward-offset loops filling the interior and appends them to `object.geometry`
+     (the original perimeter subpaths are left untouched and drawn first). Runs in
+     printer space (mm), after `parseSvg`'s transforms are already applied, so
+     offsets are physically uniform regardless of the SVG's own transform (rotation/
+     shear/etc.).
+   - Uses **pyclipper** (Clipper) rather than `shapely` (also installed) because it
+     natively resolves self-intersections and multiple fill regions under *both*
+     `nonzero` and `evenodd` fill rules, and handles holes/multi-region shapes and
+     offsetting in one tool.
+   - Pipeline per object: flatten every `isFillable()` subpath to an integer-scaled
+     polygon — `path.tessellate(tolerance, maxDepth, allowArcs=False).vertices()`
+     fully flattens every segment (including circular `Arc`s, via `Arc.toPoints()`)
+     to straight-line points and already includes the correct final point for open
+     paths (see `Path.vertices()`/`isClosed()` above), then `_toClipperPath` scales
+     to integers (pyclipper needs them; a fixed `_SCALE = 1e5` gives ~10nm precision
+     at mm scale); `Pyclipper().Execute(CT_UNION, ...)` with the object's `fillRule`
+     resolves self-intersections/holes/multiple regions into one clean boundary;
+     then `PyclipperOffset` is `Execute`'d repeatedly with an increasing cumulative
+     delta (`-spacing`, `-2*spacing`, ...) **from the same originally-added paths
+     each time** (not chained loop-to-loop) to avoid compounding discretization
+     drift, until a call returns empty. Every polygon returned by every step becomes
+     one infill loop (each `Execute` may return several — the same call is what
+     naturally splits/grows holes as area shrinks). Uses `JT_ROUND` joins (rounds
+     gaps at reflex/concave corners created by the inward offset) — a deliberate
+     aesthetic choice, not load-bearing for correctness: an earlier suspicion that
+     `JT_ROUND` caused spurious arcs on `horse.svg`'s legs turned out to be wrong
+     (see "Arc recovery" below).
+   - **Arc recovery**: pyclipper's offset output is plain polylines, so
+     `_fitPointsToTolerance`/`_loopToPath` re-fit each loop back to `Line`/`Arc`
+     segments (mirroring `Segment._fitToTolerance`, but operating on a discrete point
+     list rather than a continuous `point(t)`) so a circular fill's loops come back
+     out as a couple of `G2`/`G3` arcs instead of a many-sided polygon of `G1`s.
+     Corners must be detected first (`_findCornerIndices`, turning angle >
+     `_CORNER_ANGLE_THRESHOLD`) and never fit across: unlike the continuous
+     tessellator, which only ever fits *within* one already-smooth original segment,
+     this fitter starts from an undifferentiated flat point list — and any 3
+     non-collinear points define *some* circumcircle, so a large-radius one can
+     closely hug two straight edges meeting at a gentle angle if corners aren't
+     excluded first (found via `testDrawing.svg`'s `triangle`, which has 3 sharp
+     corners plus one genuinely curved edge — a good regression case for this).
+   - Gated by `isFillable()` (`lib/geometry.py`), not `isClosed()` — see the
+     `Path.isFillable()` entry above.
+   - **Known non-bug**: `horse.svg`'s front legs show short alternating `Line`/`Arc`
+     runs in their infill even though the legs look straight. Confirmed (by printing
+     signed perpendicular deviation along one such run) that this is genuine,
+     sub-visual curvature in the hand-drawn source path — an S-shaped wobble up to
+     ~0.45mm that a single circular arc can't represent (curvature changes sign),
+     correctly preserved within the tight `0.012mm` `tessellationTolerance`. Not
+     something infill-specific code can or should "fix" — changing it means loosening
+     `tessellationTolerance` project-wide, which the user explicitly declined.
+
+4. **Path ordering / routing** (`orderPaths`/`_orderSequence`, [`lib/route.py`](lib/route.py),
+   called between `generateInfill` and `plotter.createFile`)
    - `_orderSequence(items, startPos, endPos)` is the actual routing algorithm,
      generalized to work on *any* list of items exposing `start()`/`end()`/
      `isClosed()`/`vertices()`/`rotateTo()`/`reverse()` — both `Path` and
@@ -134,7 +212,7 @@ triggering a real run.
    - Fast enough for the stated scale (200-300 objects, well under a second) without
      needing an external TSP/routing library.
 
-4. **Gcode generation** (`Plotter` class, [`lib/plot.py`](lib/plot.py))
+5. **Gcode generation** (`Plotter` class, [`lib/plot.py`](lib/plot.py))
    - `addPath` loops over each subpath in `object.geometry`, calling
      `path.tessellate(tessellationTolerance, maxTessellationDepth)` to reduce it to
      only `Line`/circular-`Arc` segments (adaptive — see "Adaptive tessellation"
@@ -174,13 +252,21 @@ bends get many.
   `abs(abs(u)-abs(v)) <= tolerance` (already circular — same tolerance value doubles as
   the "is this basically a circle" threshold); otherwise, like `QuadraticBezier`/
   `CubicBezier`, delegates to the shared `Segment._fitToTolerance` method.
-- `Segment._fitToTolerance(t0, t1, tolerance, maxDepth, depth)` recursively fits the
-  cheapest option first: (1) a `Line` from `point(t0)` to `point(t1)`, accepted if a
-  handful of interior sample points deviate from the chord by no more than tolerance;
-  (2) else a circular `Arc` via `Arc.fromThreePoints(point(t0), point(mid), point(t1))`
-  (an alternate constructor — circumcircle for center/radius, then angles around that
-  center to pick `t0`/`sweep`), returns`None` when the 3 points are ~collinear;
-  (3) else split at the midpoint and recurse on each half.
+- `allowArcs` (default `True`, on every `tessellate()`/`_fitToTolerance()`): when
+  `False`, the Arc-fit branch is skipped entirely, so the result is Lines only,
+  bisected as needed. `Arc.tessellate(allowArcs=False)` instead flattens directly via
+  `Arc.toPoints(tolerance)` (a fixed sagitta-based angular step) rather than
+  bisection, since that's cheaper and exact for a circular arc specifically. Added
+  for infill generation (`lib/infill.py`), which needs pure polygons for pyclipper —
+  previously infill had its own private flattening function duplicating this logic.
+- `Segment._fitToTolerance(t0, t1, tolerance, maxDepth, allowArcs, depth)` recursively
+  fits the cheapest option first: (1) a `Line` from `point(t0)` to `point(t1)`,
+  accepted if a handful of interior sample points deviate from the chord by no more
+  than tolerance; (2) else, if `allowArcs`, a circular `Arc` via
+  `Arc.fromThreePoints(point(t0), point(mid), point(t1))` (an alternate constructor —
+  circumcircle for center/radius, then angles around that center to pick
+  `t0`/`sweep`), returns `None` when the 3 points are ~collinear; (3) else split at
+  the midpoint and recurse on each half.
   `maxTessellationDepth` caps the recursion as a safety net for pathological curves
   (cusps, coincident control points) — hitting it falls back to the Line from step 1
   and prints a warning rather than raising.
@@ -194,16 +280,21 @@ bends get many.
 ## Settings (`settings.json`, loaded via `commentjson` so `//` comments are allowed)
 
 Loaded into `PlotSettings` ([`lib/plot.py`](lib/plot.py)) by `initFromJson`, which
-validates setting names against the dataclass fields and prints a warning for anything
-unknown (no full type-checking yet — see `#TODO`).
+validates setting names against the dataclass fields (`{f.name for f in fields(self)}`
+— pass the *instance*, not the class name, or Pylance's `fields()` overload can fail to
+recognize the not-yet-fully-processed class as satisfying `DataclassInstance` when
+referenced by name from inside one of its own methods) and prints a warning for
+anything unknown (no full type-checking yet — see `#TODO`).
 
 - `machine`: `startPos` (nozzle X/Y/Z home), `penOffset` (pen vs. nozzle, since the pen
   is mounted offset from where the nozzle would be), `plateSize` (256x256 for P1S),
   `drawableArea` (safe region the pen can reach on the paper).
 - `gcode`: per-`State` (`draw`/`travel`, plus debug bounding-box states) heights/
   speeds/accels, `shortTravelThreshold`, `tessellationTolerance`/
-  `maxTessellationDepth` (see "Adaptive tessellation" above), and the prefix/suffix
-  gcode file paths.
+  `maxTessellationDepth` (see "Adaptive tessellation" above), `infillSpacing` (mm
+  between concentric infill loops — see "Infill generation" above; `<= 0` disables
+  infill; default `0.3` is slightly under `penWidth` `0.35` so adjacent strokes
+  overlap slightly rather than leaving gaps), and the prefix/suffix gcode file paths.
 - `visualization`: cosmetic-only settings controlling how the gcode looks in Bambu
   Studio's preview (pen width for line rendering, `lineTypes` per state, `loadDelay`
   seconds to wait for the user to load the pen, `showPenPos` toggle,
@@ -235,8 +326,9 @@ unknown (no full type-checking yet — see `#TODO`).
 ## Known TODOs / rough edges (from comments in the code)
 
 - `fileIn`/`fileOut` should eventually be user-prompted instead of hardcoded.
-- Color (`strokeColor`/`fillColor` hex→RGB) isn't implemented; `Style` colors are
-  unused placeholders.
+- Color (`strokeColor`/`fillColor` hex→RGB) isn't implemented; only *presence* of
+  fill (`None` vs. not) is used, for infill gating — the actual RGB values in
+  `Style` are still unused placeholders.
 - `Document.add()` has a noted bug: adding an object whose `id` collides with an
   existing one silently overwrites the `id` lookup without warning.
 - The print-area scale line in `parseSvg` (`#transform.scale(dimensions.imag / svg.height)`)
@@ -244,10 +336,27 @@ unknown (no full type-checking yet — see `#TODO`).
   the SVG is plotted at its authored physical size (mm).
 - No type-checking of values loaded from `settings.json` yet.
 
+## Dependencies
+
+Beyond the standard scientific-Python stack (`scipy`, used for `Segment.length()` via
+`quad`), `svgelements` (SVG parsing) and `commentjson` (JSONC settings): **`pyclipper`**
+(`pip install pyclipper`), for infill's polygon offsetting — see "Infill generation"
+above. `shapely` is also installed but not used (can't cleanly do `nonzero` fill).
+
+`pyclipper` is a compiled Cython extension and ships no type stubs of its own (no
+`types-pyclipper`/`pyclipper-stubs` package exists either), so Pylance/Pyright can't
+resolve any `pyclipper.X` call without one. [`typings/pyclipper/__init__.pyi`](typings/pyclipper/__init__.pyi)
+is a hand-cleaned stub generated by pointing `stubgen` at the *compiled submodule*
+directly (`stubgen -m pyclipper._pyclipper`, which introspects the installed `.pyd` at
+runtime — `stubgen -m pyclipper` alone just re-emits the package's own `from
+._pyclipper import *` literally and produces a useless stub). Pylance/Pyright pick up
+`./typings` automatically (the default `stubPath`), no config needed.
+
 ## Files
 
 - `_Process.py` — entry point: hardcoded `fileIn`/`fileOut`, then the run sequence
-  (`parseSvg` → `orderPaths` → `plotter.createFile`). No pipeline logic of its own.
+  (`parseSvg` → `generateInfill` → `orderPaths` → `plotter.createFile`). No pipeline
+  logic of its own.
 - `lib/` — the actual pipeline, split so each module only depends on `geometry` (a DAG,
   no cycles) and so the pipeline stages are independently testable via plain imports:
   - `lib/geometry.py` — `Style`, `Transform`, `Segment`+subclasses (`Line`, `Arc`,
@@ -259,8 +368,16 @@ unknown (no full type-checking yet — see `#TODO`).
     a geometry concern.
   - `lib/svgparse.py` — `parseSvg`/`parseSvgElement`/`readStyle`: SVG → `Document`.
   - `lib/route.py` — `orderPaths`/`_orderSequence`: the routing/ordering algorithm.
+  - `lib/infill.py` — `generateInfill`: concentric infill generation (needs
+    `pyclipper`; degrades to a no-op with a warning if it's not installed).
 - `settings.json` — machine/gcode/visualization/debug config, loaded by
   `PlotSettings.initFromJson` (`lib/plot.py`).
+- `typings/pyclipper/__init__.pyi` — hand-cleaned type stub for `pyclipper` (see
+  "Dependencies" above), since it ships none of its own.
 - `Append/startCode.gcode`, `Append/endCode.gcode` — prefix/suffix gcode templates.
 - `*.svg` (`horse.svg`, `horseSmall.svg`, `test2.svg`) — sample input drawings.
+  `testDrawing.svg`'s shapes are individually named for what they test (fill vs.
+  `fill:none`, `nonzero` vs. `evenodd`, multi-region self-intersecting fills,
+  transformed fills, filled-but-open paths, etc.) — see "Infill generation" above;
+  `horse.svg` additionally exercises a real multi-subpath compound `<path>`.
 - `*.gcode` (`horse.gcode`, `testDrawing.gcode`) — generated output, not source of truth.

@@ -9,7 +9,9 @@ from scipy.integrate import quad
 class Style:
     strokeWidth: float = 1
     strokeColor: list[int] = field(default_factory=lambda: [0, 0, 0])
-    fillColor: list[int] = field(default_factory=lambda: [0, 0, 0])
+    # none means no fill
+    fillColor: list[int] | None = field(default_factory=lambda: [0, 0, 0])
+    fillRule: str = "nonzero" # SVG default; the other valid value is "evenodd"
 
 # stores an affine transformation (rotation, scaling, shear, transform)
 class Transform:
@@ -119,8 +121,9 @@ class Transform:
 class Segment(ABC):
     # recursively fits self[t0:t1] to a single Line or circular Arc within tolerance
     # (mm), falling back to bisecting the range when neither fits. works for any
-    # segment type since it only samples self.point(t) (valid for any real t)
-    def _fitToTolerance(self, t0: float, t1: float, tolerance: float, maxDepth: int, depth: int = 0) -> list["Segment"]:
+    # segment type since it only samples self.point(t) (valid for any real t).
+    # arcs will not be generated if allowArcs is false
+    def _fitToTolerance(self, t0: float, t1: float, tolerance: float, maxDepth: int, allowArcs: bool = True, depth: int = 0) -> list["Segment"]:
         N_SAMPLES = 5
 
         p0 = self.point(t0)
@@ -151,15 +154,16 @@ class Segment(ABC):
         tm = (t0 + t1) / 2
         pm = self.point(tm)
 
-        arc = Arc.fromThreePoints(p0, pm, p1)
-        if arc is not None:
-            maxRadialDev = max((abs(abs(p - arc.center) - abs(arc.u)) for p in samplePts), default=0.0)
-            if maxRadialDev <= tolerance:
-                return [arc]
+        if allowArcs:
+            arc = Arc.fromThreePoints(p0, pm, p1)
+            if arc is not None:
+                maxRadialDev = max((abs(abs(p - arc.center) - abs(arc.u)) for p in samplePts), default=0.0)
+                if maxRadialDev <= tolerance:
+                    return [arc]
 
         # --- neither fit: split and recurse ---
-        left = self._fitToTolerance(t0, tm, tolerance, maxDepth, depth+1)
-        right = self._fitToTolerance(tm, t1, tolerance, maxDepth, depth+1)
+        left = self._fitToTolerance(t0, tm, tolerance, maxDepth, allowArcs, depth+1)
+        right = self._fitToTolerance(tm, t1, tolerance, maxDepth, allowArcs, depth+1)
         return left + right
 
     @abstractmethod
@@ -187,8 +191,9 @@ class Segment(ABC):
         """Return the x and y extrema of a segment"""
 
     @abstractmethod
-    def tessellate(self, tolerance: float, maxDepth: int) -> list["Segment"]:
-        """Return a list of line/arc segments approximating this segment within a tolerance (mm)"""
+    def tessellate(self, tolerance: float, maxDepth: int, allowArcs: bool = True) -> list["Segment"]:
+        """Return a list of line/arc segments approximating this segment within a tolerance (mm).
+        If allowArcs is False, the result is Lines only (no circular Arcs)."""
 
     # return (xmin, ymin, xmax, ymax)
     def bounds(self) -> tuple[float, float, float, float]:
@@ -232,7 +237,7 @@ class Line(Segment):
         # lines have no extrema
         return []
 
-    def tessellate(self, tolerance: float, maxDepth: int) -> list[Segment]:
+    def tessellate(self, tolerance: float, maxDepth: int, allowArcs: bool = True) -> list[Segment]:
         return [self]
 
 @dataclass
@@ -337,10 +342,28 @@ class Arc(Segment):
                 extrema.append(t)
         return extrema
 
-    def tessellate(self, tolerance: float, maxDepth: int) -> list[Segment]:
+    def tessellate(self, tolerance: float, maxDepth: int, allowArcs: bool = True) -> list[Segment]:
+        if not allowArcs:
+            points = self.toPoints(tolerance)
+            return [Line(points[i], points[i+1]) for i in range(len(points)-1)]
         if abs(abs(self.u) - abs(self.v)) <= tolerance:
             return [self] # circular arcs don't need to be tesselated
         return self._fitToTolerance(0.0, 1.0, tolerance, maxDepth)
+
+    # samples this Arc into points fine enough that no point deviates from the
+    # true circle by more than tolerance (mm) - unlike tessellate(), this works
+    # for elliptical (non-circular) arcs too, since it's purely angle-step-based
+    def toPoints(self, tolerance: float) -> list[complex]:
+        radius = abs(self.u)
+        sweep = abs(self.sweep)
+        if radius < 1e-9 or sweep < 1e-9:
+            return [self.point(0.0), self.point(1.0)]
+
+        # max angular step such that the chord's sagitta stays within tolerance
+        cosVal = max(-1.0, min(1.0, 1 - tolerance / radius))
+        thetaMax = max(math.acos(cosVal), 1e-3)
+        numSteps = max(1, math.ceil(sweep / (2 * thetaMax)))
+        return [self.point(i / numSteps) for i in range(numSteps + 1)]
 
 @dataclass
 class QuadraticBezier(Segment):
@@ -391,8 +414,8 @@ class QuadraticBezier(Segment):
         ts += self._axisExtrema(self.start.imag, self.p1.imag, self.end.imag)
         return ts
 
-    def tessellate(self, tolerance: float, maxDepth: int) -> list[Segment]:
-        return self._fitToTolerance(0.0, 1.0, tolerance, maxDepth)
+    def tessellate(self, tolerance: float, maxDepth: int, allowArcs: bool = True) -> list[Segment]:
+        return self._fitToTolerance(0.0, 1.0, tolerance, maxDepth, allowArcs)
 
 @dataclass
 class CubicBezier(Segment):
@@ -458,8 +481,8 @@ class CubicBezier(Segment):
         ts += self._axisExtrema(3*a.imag, 2*b.imag, c.imag)
         return ts
 
-    def tessellate(self, tolerance: float, maxDepth: int) -> list[Segment]:
-        return self._fitToTolerance(0.0, 1.0, tolerance, maxDepth)
+    def tessellate(self, tolerance: float, maxDepth: int, allowArcs: bool = True) -> list[Segment]:
+        return self._fitToTolerance(0.0, 1.0, tolerance, maxDepth, allowArcs)
 
 # stores a list of segments
 @dataclass
@@ -480,6 +503,25 @@ class Path:
 
     def isClosed(self, tolerance: float = 1e-6) -> bool:
         return abs(self.start() - self.end()) < tolerance
+
+    # returns whether this path encloses non-zero area - distinct from isClosed():
+    # an open path can still enclose area and a closed path can still enclose zero
+    # area (a degenerate out-and-back trace)
+    def isFillable(self) -> bool:
+        N_SAMPLES = 8
+        pts: list[complex] = []
+        for segment in self.segments:
+            for i in range(N_SAMPLES):
+                pts.append(segment.point(i / N_SAMPLES))
+        if len(pts) < 3:
+            return False
+
+        # shoelace formula, implicitly closing back to the first point
+        area = 0.0
+        for i in range(len(pts)):
+            p0, p1 = pts[i], pts[(i+1) % len(pts)]
+            area += p0.real*p1.imag - p1.real*p0.imag
+        return abs(area) / 2 > 1e-6
 
     # returns the points where segments of the path meet
     def vertices(self) -> list[complex]:
@@ -507,12 +549,22 @@ class Path:
         return bounds
 
     # returns a new Path made of only Lines/circular Arcs, fit to within tolerance
-    # (mm) of the original curves. non-mutating - leaves self untouched
-    def tessellate(self, tolerance: float, maxDepth: int) -> "Path":
+    # (mm) of the original curves. non-mutating - leaves self untouched. if
+    # allowArcs is False, the result is Lines only (no circular Arcs)
+    def tessellate(self, tolerance: float, maxDepth: int, allowArcs: bool = True) -> "Path":
         newSegments: list[Segment] = []
         for segment in self.segments:
-            newSegments.extend(segment.tessellate(tolerance, maxDepth))
+            newSegments.extend(segment.tessellate(tolerance, maxDepth, allowArcs))
         return Path(newSegments)
+
+    # builds a Path connecting the given points with Lines; if
+    # closed, an additional Line connects the last point back to the first
+    @classmethod
+    def fromPoints(cls, points: list[complex], closed: bool = False) -> "Path":
+        segments = [Line(points[i], points[i+1]) for i in range(len(points)-1)]
+        if closed:
+            segments.append(Line(points[-1], points[0]))
+        return cls(segments) # type: ignore
 
 # stores a list of paths, style, and transform
 @dataclass

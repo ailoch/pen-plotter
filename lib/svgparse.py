@@ -4,8 +4,15 @@ import svgelements
 from lib.geometry import Style, Transform, Segment, Line, Arc, QuadraticBezier, CubicBezier, Path, PathObject, Document
 
 def readStyle(element: svgelements.SVGElement) -> Style:
+    # svgelements resolves inherited/cascaded presentation attributes (fill, fill-rule)
+    # into this raw values dict, so this works the same whether the attribute is set
+    # directly on the element or inherited from a parent (e.g. horse.svg's root <svg
+    # fill="#000000">)
+    values = getattr(element, "values", {})
     return Style(
         strokeWidth=getattr(element, "stroke_width", 1),
+        fillColor=None if values.get("fill") == "none" else [0, 0, 0],
+        fillRule=values.get("fill-rule", "nonzero"),
         #TODO: implement color conversion (hex -> rgb)
         #strokeColor=getattr(element, "stroke", [0, 0, 0]),
         #fillColor=getattr(element, "fill", [0, 0, 0])

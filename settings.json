@@ -16,6 +16,7 @@
         "shortTravelThreshold": 0.5, // travel moves below this distance will not lift the pen
         "tessellationTolerance": 0.012, // max allowed deviation (mm) of gcode from the true curve
         "maxTessellationDepth": 10, // cap on recursive curve fitting
+        "infillSpacing": 0.3, // distance (mm) between concentric infill loops; <= 0 disables infill
         "loadDelay": 3, // wait this long for user to load pen
 
         "prefixFile": "Append/startCode.gcode",
@@ -30,7 +31,7 @@
         "showPenPos": true, // if false, nozzle position will be shown in slicer
         "objectHeightChange": true, // if true, slightly increases the height of every other object so they show as seperate layers when viewed in the slicer
 
-        "style": "line type", // options are "line type", "instruction", and "segment"
+        "style": "instruction", // options are "line type", "instruction", and "segment"
           // line type: shows role of lines in slicer view (styleLineOrder is ignored)
           // instruction: shows g1/g2/g3 instructions with different colors
           //  colors are set by the 1st 3 items in styleLineOrder

@@ -29,6 +29,7 @@ class PlotSettings:
     shortTravelThreshold: float = .5
     tessellationTolerance: float = .012
     maxTessellationDepth: int = 10
+    infillSpacing: float = .3 # distance between concentric infill loops (mm); <= 0 disables infill
     loadDelay: float = 20
 
     prefixFile: str = ""
@@ -49,7 +50,7 @@ class PlotSettings:
     def initFromJson(self, path):
         with open(path) as f:
             data = commentjson.load(f)
-        allowed = {f.name for f in fields(PlotSettings)}
+        allowed = {f.name for f in fields(self)}
 
         for sectionName, data in data.items():
             for settingName, setting in data.items():
