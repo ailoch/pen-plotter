@@ -79,35 +79,36 @@ triggering a real run.
 
 2. **Geometry model** ([`lib/geometry.py`](lib/geometry.py))
    - `Segment` (ABC) → `Line`, `Arc`, `QuadraticBezier`, `CubicBezier`. Each knows its
-     own `length()`, `point(t)`, `derivative(t)`, `extrema()`, `bounds()`, and
-     `tessellate(tolerance, maxDepth, allowArcs=True)` (returns a list of
-     `Line`/circular-`Arc` segments approximating itself within `tolerance` mm —
-     see "Adaptive tessellation" below; `allowArcs=False` forces a Lines-only
-     result, used by infill generation since pyclipper only understands straight
-     polygons). `Arc` additionally has `toPoints(tolerance)`, which samples itself
-     into points fine enough that none deviates from the true circle by more than
-     `tolerance` (a fixed angular step derived from the chord's sagitta) — used
-     both by `tessellate(allowArcs=False)` and directly by infill generation.
+     own `length()`, `point(t)`, `derivative(t)`, `extrema()`, `bounds()`. Tessellation
+     (reducing to `Line`/circular-`Arc`) is NOT a per-segment concern any more — see
+     `Path.tessellate` and "Adaptive tessellation" below. `Arc` additionally has
+     `toPoints(tolerance)`, which samples itself into points fine enough that none
+     deviates from the true circle by more than `tolerance` (a fixed angular step
+     derived from the chord's sagitta) — used by infill generation to flatten arcs
+     for pyclipper (which only understands straight polygons).
    - `Style` = `strokeWidth` (unused for output) + `fillColor` (`None` means SVG
      `fill:none` — no infill; a color, currently just presence not the actual RGB,
      means filled) + `fillRule` (`"nonzero"` or `"evenodd"`, read from the SVG
      `fill-rule` property — see "Infill generation" below).
-   - `Path` = list of segments, with `start()`/`end()`, `isClosed()` (start ≈ end
-     within a tolerance), `isFillable()` (encloses non-zero area — deliberately
-     *separate* from `isClosed()`: an open path can still enclose area via SVG's
-     implicit fill closure, and a closed path can enclose zero area, e.g. a
-     degenerate out-and-back trace; computed via the shoelace formula over each
-     segment sampled at several points, not raw `vertices()`, so a full-circle `Arc`
-     — whose start and end coincide — is measured correctly instead of collapsing to
+   - `Path` = list of segments, with `start()`/`end()`, `point(t)` (a single
+     normalized parameter, `0 <= t <= 1`, spanning the *entire* subpath — resolves
+     which segment `t` falls into internally; the building block "Adaptive
+     tessellation" below fits across), `isClosed()` (start ≈ end within a
+     tolerance), `isFillable()` (encloses non-zero area — deliberately *separate*
+     from `isClosed()`: an open path can still enclose area via SVG's implicit fill
+     closure, and a closed path can enclose zero area, e.g. a degenerate
+     out-and-back trace; computed via the shoelace formula over each segment
+     sampled at several points, not raw `vertices()`, so a full-circle `Arc` —
+     whose start and end coincide — is measured correctly instead of collapsing to
      a single point), `vertices()` (the point between every pair of consecutive
      segments — i.e. every candidate place the pen could enter/exit without changing
      the drawn shape; includes the final endpoint too for open paths),
      `rotateTo(index)` (re-splits a *closed* path so `segments[index]` is drawn
      first — raises if the path isn't closed, since re-splitting an open path would
-     change its shape), `tessellate(tolerance, maxDepth, allowArcs=True)` (non-mutating
-     — concatenates each segment's own `tessellate()` into a new `Path`), and the
-     classmethod `fromPoints(points, closed=False)` (builds a single-subpath `Path`
-     of `Line`s connecting the given points, closing back to the first if `closed`).
+     change its shape), `tessellate(tolerance, maxDepth, allowArcs=True)` (see
+     "Adaptive tessellation" below), and the classmethod `fromPoints(points,
+     closed=False)` (builds a single-subpath `Path` of `Line`s connecting the given
+     points, closing back to the first if `closed`).
      `PathObject` = a `list[Path]` + `Style` (fill presence/rule drive infill; stroke
      width/color still unused for output) + `Transform`. Almost always one `Path`
      (one `<rect>`/`<circle>`/`<ellipse>`, or one simple `<path>`), but more than
@@ -122,7 +123,7 @@ triggering a real run.
      `ValueError` otherwise (same invariant `Path.rotateTo()` already enforces). A
      multi-subpath (or single open-path) object is otherwise treated like an open
      `Path`: freely reversible as a whole, but not re-anchorable at an arbitrary
-     vertex.
+     vertex. `point(subpathIndex, t)` mirrors `Path.point(t)` for a specific subpath.
    - `Document` = list of `PathObject`s plus an id→object lookup.
    - `Transform` is a hand-rolled 2D affine matrix (`[a,b,c,d,e,f]`, same convention as
      SVG's `matrix()`), supporting translate/scale/rotate/skew/flip and composition via
@@ -160,20 +161,19 @@ triggering a real run.
      (see "Arc recovery" below).
    - **Arc recovery**: pyclipper's offset output is plain polylines, so
      `_fitPointsToTolerance`/`_loopToPath` (via the shared `_tryFit` helper) re-fit
-     each loop back to `Line`/`Arc` segments (mirroring `Segment._fitToTolerance`,
-     but operating on a discrete point list rather than a continuous `point(t)`) so
-     a circular fill's loops come back out as a couple of `G2`/`G3` arcs instead of
-     a many-sided polygon of `G1`s. Corners must be detected first
-     (`_findCornerIndices`, turning angle > `_CORNER_ANGLE_THRESHOLD`) and never fit
-     across: unlike the continuous tessellator, which only ever fits *within* one
-     already-smooth original segment, this fitter starts from an undifferentiated
-     flat point list — and any 3 non-collinear points define *some* circumcircle, so
-     a large-radius one can closely hug two straight edges meeting at a gentle angle
+     each loop back to `Line`/`Arc` segments (a discrete-point-list analog of
+     `Path`'s own bidirectional fitter — see "Adaptive tessellation" below) so a
+     circular fill's loops come back out as a couple of `G2`/`G3` arcs instead of a
+     many-sided polygon of `G1`s. Corners must be detected first
+     (`_findCornerIndices`, turning angle > `_CORNER_ANGLE_THRESHOLD`) and never
+     fit across, since any 3 non-collinear points define *some* circumcircle, and a
+     large-radius one can closely hug two straight edges meeting at a gentle angle
      if corners aren't excluded first (found via `testDrawing.svg`'s `triangle`,
      which has 3 sharp corners plus one genuinely curved edge — a good regression
-     case for this; `triangle` still has a related, unfixed instance of this same
-     bug class when a run mixes a straight edge with a genuinely curved one, not
-     just a small rounded fillet — see the spawned follow-up task).
+     case for this). `Path`'s own fitter hits this exact same bug class in a
+     different form (see `MAX_RADIUS_TO_CHORD` in "Adaptive tessellation" below) —
+     `Arc.fromThreePoints`' circumcircle math is fundamentally numerically unstable
+     for near-collinear inputs regardless of which fitter calls it.
    - **`_tryFit`'s midpoint safety check**: a candidate Line/Arc is validated not
      just against the points pyclipper actually gave it, but also against the
      midpoint of every *consecutive* pair of those points. pyclipper always
@@ -300,41 +300,83 @@ triggering a real run.
      `{LOAD_DELAY}`, `{BED_EXCLUDE_AREA}`) substituted from `PlotSettings` via
      `fileAppend`.
 
-### Adaptive tessellation (`Segment.tessellate`/`Path.tessellate`, used by `addPath`)
+### Adaptive tessellation (`Path.tessellate`, used by `addPath` and infill)
 
-Reduces any path to only `Line`s and circular `Arc`s (gcode's native `G1`/`G2`/`G3`
-primitives), fit to within `tessellationTolerance` mm of the original curve instead of
-chopping into fixed-length pieces — long gentle curves get few segments, only sharp
-bends get many.
+Reduces a whole *subpath* (not one segment at a time) to only `Line`s and circular
+`Arc`s (gcode's native `G1`/`G2`/`G3` primitives, or infill's required pure-`Line`
+polygons when `allowArcs=False`), fit to within `tessellationTolerance` mm of the
+original curve. `Path.tessellate(tolerance, maxDepth, allowArcs=True)` is non-mutating.
+`maxTessellationDepth` is accepted for signature stability with existing callers but is
+unused by this fitter (see "no depth cap" below).
 
-- `Line.tessellate` → itself (already exact). `Arc.tessellate` → itself if
-  `abs(abs(u)-abs(v)) <= tolerance` (already circular — same tolerance value doubles as
-  the "is this basically a circle" threshold); otherwise, like `QuadraticBezier`/
-  `CubicBezier`, delegates to the shared `Segment._fitToTolerance` method.
-- `allowArcs` (default `True`, on every `tessellate()`/`_fitToTolerance()`): when
-  `False`, the Arc-fit branch is skipped entirely, so the result is Lines only,
-  bisected as needed. `Arc.tessellate(allowArcs=False)` instead flattens directly via
-  `Arc.toPoints(tolerance)` (a fixed sagitta-based angular step) rather than
-  bisection, since that's cheaper and exact for a circular arc specifically. Added
-  for infill generation (`lib/infill.py`), which needs pure polygons for pyclipper —
-  previously infill had its own private flattening function duplicating this logic.
-- `Segment._fitToTolerance(t0, t1, tolerance, maxDepth, allowArcs, depth)` recursively
-  fits the cheapest option first: (1) a `Line` from `point(t0)` to `point(t1)`,
-  accepted if a handful of interior sample points deviate from the chord by no more
-  than tolerance; (2) else, if `allowArcs`, a circular `Arc` via
-  `Arc.fromThreePoints(point(t0), point(mid), point(t1))` (an alternate constructor —
-  circumcircle for center/radius, then angles around that center to pick
-  `t0`/`sweep`), returns `None` when the 3 points are ~collinear; (3) else split at
-  the midpoint and recurse on each half.
-  `maxTessellationDepth` caps the recursion as a safety net for pathological curves
-  (cusps, coincident control points) — hitting it falls back to the Line from step 1
-  and prints a warning rather than raising.
-- `_fitToTolerance` is defined once on the `Segment` base class (not per subclass)
-  because it only calls `self.point(t)`, which every segment type provides and which
-  is valid for any real `t`, not just `[0,1]`.
-- `Path.tessellate` is a thin, non-mutating aggregator — concatenates each segment's
-  `tessellate()` into a new `Path`, leaving the original untouched (other code, like the
-  debug bounding boxes, still reads the original geometry).
+- **Per-path, not per-segment**: an earlier version tessellated each `Segment`
+  independently (`Segment.tessellate`/`_fitToTolerance`, since removed), which meant a
+  segment boundary was always a hard fit boundary — consecutive collinear `Line`s never
+  merged, and a run of short `Line`s tracing a circular arc stayed many `G1`s instead of
+  becoming one `G2`/`G3`. The current fitter works in `Path.point(t)`'s single
+  normalized `0 <= t <= 1` space spanning the whole subpath (internally rescaled to
+  segment index + local `t`), so a fit can span *across* original segment boundaries.
+- **Bidirectional greedy, not midpoint-split**: for a failed range, blindly splitting
+  at the midpoint can break up an otherwise-straight run just because a corner happens
+  to fall near the middle — e.g. `/\______` (each char one segment) should become
+  `/`, `\`, `______`, not `/\`, `__`, `____`. `Path._fitRange(t0, t1, tolerance,
+  allowArcs)` instead greedily grows a fit from **each end** via `Path._greedyExtent`
+  and meets in the middle:
+  1. `tf, front = _greedyExtent(t0, t1, ...)` — farthest a single Line/Arc can reach
+     growing forward from `t0`. If it reaches `t1`, the whole range fits as one segment.
+  2. `tb, back = _greedyExtent(t1, t0, ..., backward=True)` — farthest growing
+     backward from `t1`.
+  3. If the two overlap (`tf >= tb`), `Path._trimSegmentStart` reuses `back`'s own
+     already-validated geometry (just restricting its parametric start to `tf`) rather
+     than recomputing a fresh fit — fitting is *not* monotonic under range-narrowing (a
+     fresh 3-point circumcircle through different points isn't guaranteed to still
+     satisfy tolerance even though its range is a subset of one that already did;
+     confirmed by a real crash before this fix existed).
+  4. Otherwise, recurse on the unfit middle `[tf, tb]` and return `[front, ...middle,
+     back]`.
+  A minimal range always fits a `Line` (deviation → 0 as the range shrinks), so `tf`
+  always makes forward progress and this always terminates — **no `maxDepth` cap
+  needed**, mirroring the same reasoning behind infill's galloping-search rewrite.
+- **`Path._greedyExtent`**: finds the farthest extent via exponential ("galloping")
+  growth then a binary search between the last success and first failure — the same
+  technique as infill's `_fitPointsToTolerance` (O(n)-amortized, avoids the O(n²) trap
+  of binary-searching the full remaining range every step). The returned extent is only
+  approximate (stops once within ~2% of a segment's length rather than fully
+  converging) — a slightly-short extent just shifts a little more work onto the
+  neighboring fit, never risks exceeding tolerance itself.
+- **`Path._tryFitRange(t0, t1, tolerance, allowArcs)`** is the actual fit test: builds
+  `_SAMPLES_PER_SEGMENT` deviation-check samples *per original segment touched by the
+  range*, not spread evenly across the whole range — a large range dominated by one
+  nearly-straight segment can otherwise starve a small curved fragment of samples
+  (confirmed: missed a real 0.039mm spike, over 3x tolerance, in a sheared ellipse's
+  arc tail). Also explicitly samples every original segment **boundary** strictly
+  inside the range (the only place a multi-segment range can hide a genuine corner —
+  position-continuous, direction-discontinuous — that per-segment interior sampling
+  alone would never land exactly on) and a few geometrically-spaced points right next
+  to `t0`/`t1` themselves (since those usually aren't original path points but wherever
+  a *neighboring* range's own approximate search happened to stop, a sharp feature can
+  sit just past one with no regular sample close enough to catch it). Tries `Line`
+  first (true distance to the finite chord *segment*, clamped — not just perpendicular
+  deviation from the infinite line, which would miss a curve that travels out along the
+  chord's own direction and doubles back past an endpoint, a real "out and back" shape
+  seen in infill loops), then, if `allowArcs`, a circular `Arc` via
+  `Arc.fromThreePoints(point(t0), point(mid), point(t1))` (true distance to the finite
+  swept *arc*, angle-clamped via `Arc._thetaToT` — same "out and back" risk, radially).
+  **`MAX_RADIUS_TO_CHORD`**: `Arc.fromThreePoints`' circumcircle math is numerically
+  unstable for near-collinear inputs (confirmed: an equivalent range, differing only by
+  sub-ULP float noise, produced a 359mm-radius circle one call and a 581mm-radius circle
+  the next) — a well-fit arc's chord is always a meaningful fraction of its radius, so a
+  radius/chord ratio this extreme is itself the signal that the fit is numerical noise,
+  not real gentle curvature; rejected outright rather than trusted.
+- **Already-circular `Arc` segments are kept atomic** (arcs mode only): a segment where
+  `abs(abs(u)-abs(v)) <= tolerance` is emitted unchanged as a hard fit boundary, rather
+  than folded into a surrounding run. This keeps exact circles exact and sidesteps a
+  real degeneracy — a full-circle `Arc` has `start == end`, so `Arc.fromThreePoints`
+  would see `p0 == p1` and (correctly) refuse to fit a circumcircle, which would
+  otherwise force the whole circle down to tiny `Line` fallbacks. When `allowArcs=False`
+  (infill needs pure-`Line` polygons) there's no atomic handling — every segment, arcs
+  included, is sampled via `point(t)` and line-fit, so a `<circle>` still flattens to a
+  valid polygon.
 
 ## Settings (`settings.json`, loaded via `commentjson` so `//` comments are allowed)
 

@@ -119,53 +119,6 @@ class Transform:
 
 # wrapper for different types of path segments
 class Segment(ABC):
-    # recursively fits self[t0:t1] to a single Line or circular Arc within tolerance
-    # (mm), falling back to bisecting the range when neither fits. works for any
-    # segment type since it only samples self.point(t) (valid for any real t).
-    # arcs will not be generated if allowArcs is false
-    def _fitToTolerance(self, t0: float, t1: float, tolerance: float, maxDepth: int, allowArcs: bool = True, depth: int = 0) -> list["Segment"]:
-        N_SAMPLES = 5
-
-        p0 = self.point(t0)
-        p1 = self.point(t1)
-        sampleTs = [t0 + (t1-t0) * (i / (N_SAMPLES+1)) for i in range(1, N_SAMPLES+1)]
-        samplePts = [self.point(t) for t in sampleTs]
-
-        if depth >= maxDepth:
-            print(f"Warning: tessellation of {type(self).__name__} exceeded maxTessellationDepth ({maxDepth}); falling back to a straight line, tolerance may be exceeded")
-            return [Line(p0, p1)]
-
-        # --- try a Line ---
-        chord = p1 - p0
-        chordLen = abs(chord)
-        if chordLen < 1e-9:
-            # zero-length chord: fall back to distance from p0 directly
-            maxDev = max((abs(p - p0) for p in samplePts), default=0.0)
-        else:
-            chordDir = chord / chordLen
-            # rotate (p - p0) into the chord's frame; the imaginary part is then the
-            # perpendicular distance from the chord
-            maxDev = max((abs(((p - p0) * chordDir.conjugate()).imag) for p in samplePts), default=0.0)
-
-        if maxDev <= tolerance:
-            return [Line(p0, p1)]
-
-        # --- try a circular Arc via 3-point circumcircle ---
-        tm = (t0 + t1) / 2
-        pm = self.point(tm)
-
-        if allowArcs:
-            arc = Arc.fromThreePoints(p0, pm, p1)
-            if arc is not None:
-                maxRadialDev = max((abs(abs(p - arc.center) - abs(arc.u)) for p in samplePts), default=0.0)
-                if maxRadialDev <= tolerance:
-                    return [arc]
-
-        # --- neither fit: split and recurse ---
-        left = self._fitToTolerance(t0, tm, tolerance, maxDepth, allowArcs, depth+1)
-        right = self._fitToTolerance(tm, t1, tolerance, maxDepth, allowArcs, depth+1)
-        return left + right
-
     @abstractmethod
     def length(self) -> float:
         """Return the arc length"""
@@ -189,11 +142,6 @@ class Segment(ABC):
     @abstractmethod
     def extrema(self) -> list[float]:
         """Return the x and y extrema of a segment"""
-
-    @abstractmethod
-    def tessellate(self, tolerance: float, maxDepth: int, allowArcs: bool = True) -> list["Segment"]:
-        """Return a list of line/arc segments approximating this segment within a tolerance (mm).
-        If allowArcs is False, the result is Lines only (no circular Arcs)."""
 
     # return (xmin, ymin, xmax, ymax)
     def bounds(self) -> tuple[float, float, float, float]:
@@ -237,9 +185,6 @@ class Line(Segment):
         # lines have no extrema
         return []
 
-    def tessellate(self, tolerance: float, maxDepth: int, allowArcs: bool = True) -> list[Segment]:
-        return [self]
-
 @dataclass
 class Arc(Segment):
     center: complex = 0
@@ -248,9 +193,14 @@ class Arc(Segment):
     t0: float = 0
     sweep: float = 2*math.pi # sweep is between -2pi (ccw) and 2pi (cw)
 
-    # returns an Arc that passes through the given points
+    # returns an Arc that passes through the given points, or None if they're
+    # too close to collinear to define one. maxRadiusToChord rejects circles
+    # whose radius exceeds that multiple of the p0-p1 chord length: for near-
+    # collinear input, the circumcircle math below is numerically unstable
+    # (tiny input noise can swing the computed radius wildly), and a genuinely
+    # well-fit circle's chord is always a meaningful fraction of its radius
     @classmethod
-    def fromThreePoints(cls, p0: complex, pm: complex, p1: complex) -> "Arc | None":
+    def fromThreePoints(cls, p0: complex, pm: complex, p1: complex, maxRadiusToChord: float | None = None) -> "Arc | None":
         ax, ay = p0.real, p0.imag
         bx, by = pm.real, pm.imag
         cx, cy = p1.real, p1.imag
@@ -272,6 +222,8 @@ class Arc(Segment):
 
         center = complex(centerX, centerY)
         radius = abs(p0 - center)
+        if maxRadiusToChord is not None and radius > maxRadiusToChord * max(abs(p1 - p0), 1e-9):
+            return None
 
         # angles of the 3 points around the center (negated imag to match the Arc's
         # u=(r,0)/v=(0,-r) basis, where increasing angle sweeps clockwise / +sweep = G2)
@@ -342,14 +294,6 @@ class Arc(Segment):
                 extrema.append(t)
         return extrema
 
-    def tessellate(self, tolerance: float, maxDepth: int, allowArcs: bool = True) -> list[Segment]:
-        if not allowArcs:
-            points = self.toPoints(tolerance)
-            return [Line(points[i], points[i+1]) for i in range(len(points)-1)]
-        if abs(abs(self.u) - abs(self.v)) <= tolerance:
-            return [self] # circular arcs don't need to be tesselated
-        return self._fitToTolerance(0.0, 1.0, tolerance, maxDepth)
-
     # samples this Arc into points fine enough that no point deviates from the
     # true circle by more than tolerance (mm) - unlike tessellate(), this works
     # for elliptical (non-circular) arcs too, since it's purely angle-step-based
@@ -413,9 +357,6 @@ class QuadraticBezier(Segment):
         ts = self._axisExtrema(self.start.real, self.p1.real, self.end.real)
         ts += self._axisExtrema(self.start.imag, self.p1.imag, self.end.imag)
         return ts
-
-    def tessellate(self, tolerance: float, maxDepth: int, allowArcs: bool = True) -> list[Segment]:
-        return self._fitToTolerance(0.0, 1.0, tolerance, maxDepth, allowArcs)
 
 @dataclass
 class CubicBezier(Segment):
@@ -481,9 +422,6 @@ class CubicBezier(Segment):
         ts += self._axisExtrema(3*a.imag, 2*b.imag, c.imag)
         return ts
 
-    def tessellate(self, tolerance: float, maxDepth: int, allowArcs: bool = True) -> list[Segment]:
-        return self._fitToTolerance(0.0, 1.0, tolerance, maxDepth, allowArcs)
-
 # stores a list of segments
 @dataclass
 class Path:
@@ -500,6 +438,16 @@ class Path:
 
     def end(self) -> complex:
         return self.segments[-1].point(1)
+
+    # returns the point at a single normalized parameter spanning the WHOLE
+    # subpath (0 <= t <= 1, t=1 is the path's end), resolving which segment t
+    # falls in - lets tessellate() sample continuously across segment boundaries
+    # instead of being confined to one segment's own [0,1] range
+    def point(self, t: float) -> complex:
+        n = len(self.segments)
+        s = min(max(t, 0.0), 1.0) * n
+        i = min(int(s), n - 1)
+        return self.segments[i].point(s - i)
 
     def isClosed(self, tolerance: float = 1e-6) -> bool:
         return abs(self.start() - self.end()) < tolerance
@@ -548,13 +496,207 @@ class Path:
             bounds = (min(bounds[0], segmentBounds[0]), min(bounds[1], segmentBounds[1]), max(bounds[2], segmentBounds[2]), max(bounds[3], segmentBounds[3]))
         return bounds
 
-    # returns a new Path made of only Lines/circular Arcs, fit to within tolerance
-    # (mm) of the original curves. non-mutating - leaves self untouched. if
-    # allowArcs is False, the result is Lines only (no circular Arcs)
+    # deviation-check samples per original segment touched by a candidate fit
+    # range (see _tryFitRange)
+    _SAMPLES_PER_SEGMENT = 10
+
+    # circumcircle radius/chord cutoff passed to Arc.fromThreePoints (see there)
+    _MAX_RADIUS_TO_CHORD = 20.0
+
+    # tries to fit [t0,t1] (in Path.point()'s 0..1 space) to a single Line or
+    # circular Arc within tolerance (mm); returns None if neither fits. Line is
+    # tried first so a near-straight range is never represented as an arc.
+    def _tryFitRange(self, t0: float, t1: float, tolerance: float, allowArcs: bool) -> "Segment | None":
+        n = len(self.segments)
+        p0 = self.point(t0)
+        p1 = self.point(t1)
+
+        # sample each original segment touched by [t0,t1] within its own
+        # sub-range, not spread evenly across the whole range - otherwise a
+        # large range dominated by one straight segment can starve a small
+        # curved fragment of samples. Also test every segment boundary
+        # explicitly, since it's the only place a corner can hide between
+        # otherwise-smooth per-segment samples.
+        firstSeg = min(int(t0 * n), n - 1)
+        lastSeg = min(int(t1 * n), n - 1) if t1 < 1.0 else n - 1
+        sampleTs: list[float] = []
+        for segIdx in range(firstSeg, lastSeg + 1):
+            segT0 = max(t0, segIdx / n)
+            segT1 = min(t1, (segIdx + 1) / n)
+            if segT1 <= segT0:
+                continue
+            if segT0 > t0:
+                sampleTs.append(segT0) # exact boundary - see corner note above
+            for i in range(1, self._SAMPLES_PER_SEGMENT + 1):
+                sampleTs.append(segT0 + (segT1 - segT0) * (i / (self._SAMPLES_PER_SEGMENT + 1)))
+
+        # t0/t1 themselves are usually not original path points but wherever a
+        # neighboring range's search happened to stop, so add a few samples
+        # geometrically close to each in case a feature sits just past one
+        span = t1 - t0
+        if span > 1e-12:
+            for frac in (0.0005, 0.003, 0.02):
+                sampleTs.append(t0 + span * frac)
+                sampleTs.append(t1 - span * frac)
+
+        samplePts = [self.point(t) for t in sampleTs]
+
+        # --- try a Line ---
+        chord = p1 - p0
+        chordLen = abs(chord)
+        if chordLen < 1e-9:
+            maxDev = max((abs(p - p0) for p in samplePts), default=0.0)
+        else:
+            chordDir = chord / chordLen
+            # distance to the finite segment [p0,p1], not perpendicular
+            # deviation from the infinite line - catches a curve that travels
+            # out along the chord and doubles back past an endpoint
+            def _distToChordSegment(p: complex) -> float:
+                rel = (p - p0) * chordDir.conjugate()
+                along = max(0.0, min(chordLen, rel.real))
+                return math.hypot(rel.real - along, rel.imag)
+            maxDev = max((_distToChordSegment(p) for p in samplePts), default=0.0)
+
+        if maxDev <= tolerance:
+            return Line(p0, p1)
+
+        # --- try a circular Arc via 3-point circumcircle ---
+        if allowArcs:
+            pm = self.point((t0 + t1) / 2)
+            arc = Arc.fromThreePoints(p0, pm, p1, maxRadiusToChord=self._MAX_RADIUS_TO_CHORD)
+            if arc is not None:
+                # distance to the finite swept arc, not radial deviation from
+                # the underlying circle - catches a point that's radially
+                # close but at a totally different, unswept angle
+                def _distToArcSegment(p: complex) -> float:
+                    rel = p - arc.center
+                    theta = math.atan2(-rel.imag, rel.real)
+                    u = arc._thetaToT(theta)
+                    if u is None:
+                        return min(abs(p - arc.point(0.0)), abs(p - arc.point(1.0)))
+                    return abs(abs(rel) - abs(arc.u))
+                maxRadialDev = max((_distToArcSegment(p) for p in samplePts), default=0.0)
+                if maxRadialDev <= tolerance:
+                    return arc
+
+        return None
+
+    # from tStart, finds the farthest extent toward tLimit that still fits a
+    # single Line/Arc, via exponential growth then a binary search between the
+    # last success and first failure. backward=True grows leftward from tStart
+    # instead of rightward. The extent is approximate, not the exact farthest
+    # fitting t - a slightly-short extent only shifts more work onto the
+    # neighboring fit, it never risks exceeding tolerance.
+    def _greedyExtent(self, tStart: float, tLimit: float, tolerance: float, allowArcs: bool, backward: bool = False) -> tuple[float, "Segment"]:
+        span = (tStart - tLimit) if backward else (tLimit - tStart)
+        n = len(self.segments)
+
+        def fitDelta(delta: float) -> "Segment | None":
+            if backward:
+                return self._tryFitRange(tStart - delta, tStart, tolerance, allowArcs)
+            return self._tryFitRange(tStart, tStart + delta, tolerance, allowArcs)
+
+        # a minimal (half-segment) range should always fit
+        lo = min(span, 0.5 / n)
+        found = fitDelta(lo)
+        if found is None:
+            # pathological fallback: fall back to a direct Line
+            lo = min(span, 1e-6)
+            a, b = (tStart - lo, tStart) if backward else (tStart, tStart + lo)
+            found = Line(self.point(a), self.point(b))
+
+        if lo >= span:
+            end = tStart - lo if backward else tStart + lo
+            return end, found
+
+        # exponential growth from lo
+        hi = span
+        size = lo
+        while size < span:
+            nextSize = min(size * 2, span)
+            fit = fitDelta(nextSize)
+            if fit is None:
+                hi = nextSize
+                break
+            lo, found, size = nextSize, fit, nextSize
+        else:
+            end = tStart - span if backward else tStart + span
+            return end, found
+
+        # binary search between lo (known good) and hi (known bad); stop once
+        # within ~2% of a segment's length rather than fully converging
+        minStep = (span / n) * 0.02
+        while hi - lo > minStep:
+            mid = (lo + hi) / 2
+            fit = fitDelta(mid)
+            if fit is not None:
+                lo, found = mid, fit
+            else:
+                hi = mid
+
+        end = tStart - lo if backward else tStart + lo
+        return end, found
+
+    # trims an already-fitted segment (known to cover [tb,t1]) so it starts at
+    # newT instead - reuses its own validated geometry rather than recomputing
+    # a fresh fit, since fitting isn't monotonic under range-narrowing: a fresh
+    # 3-point circumcircle through different points isn't guaranteed to still
+    # satisfy tolerance just because its range is a subset of one that did.
+    def _trimSegmentStart(self, seg: "Segment", tb: float, t1: float, newT: float) -> "Segment":
+        frac = 0.0 if t1 == tb else (newT - tb) / (t1 - tb)
+        if isinstance(seg, Arc):
+            return Arc(center=seg.center, u=seg.u, v=seg.v, t0=seg.t0 + frac * seg.sweep, sweep=seg.sweep * (1 - frac))
+        return Line(self.point(newT), seg.point(1))
+
+    # fits [t0,t1] to a sequence of Lines/circular Arcs within tolerance (mm):
+    # greedily consumes the most range a single Line/Arc can cover from each
+    # side, then recurses on whatever's left in the middle, rather than
+    # blindly splitting at the midpoint (which can break an otherwise-straight
+    # run just because a corner falls near it - "/\______" should become "/",
+    # "\", "______", not "/", "\", "__", "____").
+    def _fitRange(self, t0: float, t1: float, tolerance: float, allowArcs: bool) -> list["Segment"]:
+        tf, front = self._greedyExtent(t0, t1, tolerance, allowArcs)
+        if tf >= t1:
+            return [front] # front's search already reached t1
+
+        tb, back = self._greedyExtent(t1, t0, tolerance, allowArcs, backward=True)
+
+        if tf >= tb:
+            return [front, self._trimSegmentStart(back, tb, t1, tf)]
+
+        return [front] + self._fitRange(tf, tb, tolerance, allowArcs) + [back]
+
+    # returns a new Path made of only Lines/circular Arcs, fit to within
+    # tolerance (mm) of the original curves. non-mutating. if allowArcs is
+    # False, the result is Lines only. fits can span across original segment
+    # boundaries (see _fitRange), so e.g. consecutive collinear Lines merge
+    # into one, and a run of short Lines tracing a circular arc becomes a
+    # couple of Arcs.
     def tessellate(self, tolerance: float, maxDepth: int, allowArcs: bool = True) -> "Path":
+        n = len(self.segments)
+        if n == 0:
+            return Path([])
+
+        if not allowArcs:
+            return Path(self._fitRange(0.0, 1.0, tolerance, False))
+
+        # already-circular Arc segments are kept atomic (hard boundaries): a
+        # full circle has start==end, so fitting across it would hit
+        # Arc.fromThreePoints' p0==p1 degenerate case and collapse to tiny Lines
         newSegments: list[Segment] = []
-        for segment in self.segments:
-            newSegments.extend(segment.tessellate(tolerance, maxDepth, allowArcs))
+        runStart: int | None = None
+        for i, segment in enumerate(self.segments):
+            isAtomicArc = isinstance(segment, Arc) and abs(abs(segment.u) - abs(segment.v)) <= tolerance
+            if isAtomicArc:
+                if runStart is not None:
+                    newSegments.extend(self._fitRange(runStart / n, i / n, tolerance, True))
+                    runStart = None
+                newSegments.append(segment)
+            elif runStart is None:
+                runStart = i
+        if runStart is not None:
+            newSegments.extend(self._fitRange(runStart / n, 1.0, tolerance, True))
+
         return Path(newSegments)
 
     # builds a Path connecting the given points with Lines; if
@@ -589,6 +731,11 @@ class PathObject:
 
     def end(self) -> complex:
         return self.geometry[-1].end()
+
+    # returns the point at normalized parameter t (0 <= t <= 1) along the given
+    # subpath - see Path.point()
+    def point(self, subpathIndex: int, t: float) -> complex:
+        return self.geometry[subpathIndex].point(t)
 
     # only true for a single closed loop
     def isClosed(self) -> bool:
