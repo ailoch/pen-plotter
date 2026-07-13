@@ -1,3 +1,4 @@
+import os
 import cProfile
 import pstats
 from lib.plot import Plotter
@@ -5,9 +6,25 @@ from lib.svgparse import parseSvg
 from lib.infill import generateInfill
 from lib.route import orderPaths
 
-# plot settings
-fileIn = "testDrawing.svg" # hardcoded to speed up testing, need to ask user later
-fileOut = "testDrawing.gcode"
+def promptInputFile() -> str:
+    while True:
+        path = input("Enter input file: ")
+        if os.path.isfile(path) and path.lower().endswith(".svg"):
+            return path
+        print(f"'{path}' is not an existing SVG file.")
+
+def promptOutputFile() -> str:
+    while True:
+        path = input("Enter output file: ")
+        if os.path.exists(path):
+            answer = input(f"'{path}' already exists. Overwrite? (y/n): ")
+            if "y" in answer.lower():
+                return path
+            continue
+        return path
+
+fileIn = promptInputFile()
+fileOut = promptOutputFile()
 
 plotter = Plotter("settings.json")
 

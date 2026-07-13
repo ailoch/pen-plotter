@@ -11,17 +11,20 @@ the top of the file explorer. It just imports from [`lib/`](lib/) (see "Files" b
 and runs the pipeline:
 
 ```python
+fileIn = promptInputFile()   # repeats "Enter input file: " until an existing .svg is given
+fileOut = promptOutputFile() # repeats "Enter output file: " until a free path, or an
+                              # existing one the user confirms overwriting
 plotter = Plotter("settings.json")
-document = parseSvg(fileIn, ...)
-generateInfill(document, ...)  # add concentric infill loops to filled shapes
-orderPaths(document, ...)  # reorder for minimal pen-up travel
-plotter.createFile(document, fileOut)
+def run():
+    document = parseSvg(fileIn, ...)
+    generateInfill(document, ...)  # add concentric infill loops to filled shapes
+    orderPaths(document, ...)  # reorder for minimal pen-up travel
+    plotter.createFile(document, fileOut)
+run()  # or profiled via cProfile if debug.profiling is set - see "Profiling" below
 input()  # keeps the console window open
 ```
 
-`fileIn`/`fileOut` are hardcoded in `_Process.py` itself — currently `testDrawing.svg`
--> `testDrawing.gcode`. Change these by hand to process a different drawing (user wants
-to eventually prompt for these instead).
+`promptInputFile`/`promptOutputFile` loop on plain `input()` calls — no CLI args yet.
 
 All the actual logic lives in `lib/`, a plain import-safe package (no module-level
 execution) — `import lib.route` etc. works with no side effects, which is how this
@@ -404,7 +407,16 @@ anything unknown (no full type-checking yet — see `#TODO`).
   coloring scheme described in the comments in `Plotter.addLine`, `lib/plot.py`).
 - `debug`: `showBoundingBoxes` — draws segment/path/document bounding rectangles in
   the output for visual debugging (as `_SEGMENT_BOUNDS`/`_PATH_BOUNDS`/
-  `_DOCUMENT_BOUNDS` pseudo-states).
+  `_DOCUMENT_BOUNDS` pseudo-states). `profiling` — see "Profiling" below.
+
+## Profiling
+
+Set `debug.profiling: true` in `settings.json` (`PlotSettings.profiling`,
+`lib/plot.py`) to run `_Process.py`'s pipeline under `cProfile` and print the 30
+slowest functions by cumulative time (`pstats`, sorted by `"cumulative"`) before the
+usual `input()` prompt. `_Process.py` wraps `parseSvg`/`generateInfill`/`orderPaths`/
+`createFile` in a single `run()` function specifically so the profiler can enable/
+disable around one call — off by default, since `Profile()` adds per-call overhead.
 
 ## Hardware notes (why the code looks the way it does)
 
@@ -426,7 +438,6 @@ anything unknown (no full type-checking yet — see `#TODO`).
 
 ## Known TODOs / rough edges (from comments in the code)
 
-- `fileIn`/`fileOut` should eventually be user-prompted instead of hardcoded.
 - Color (`strokeColor`/`fillColor` hex→RGB) isn't implemented; only *presence* of
   fill (`None` vs. not) is used, for infill gating — the actual RGB values in
   `Style` are still unused placeholders.
@@ -455,9 +466,9 @@ runtime — `stubgen -m pyclipper` alone just re-emits the package's own `from
 
 ## Files
 
-- `_Process.py` — entry point: hardcoded `fileIn`/`fileOut`, then the run sequence
-  (`parseSvg` → `generateInfill` → `orderPaths` → `plotter.createFile`). No pipeline
-  logic of its own.
+- `_Process.py` — entry point: prompts for `fileIn`/`fileOut` (see above), then the run
+  sequence (`parseSvg` → `generateInfill` → `orderPaths` → `plotter.createFile`),
+  optionally under `cProfile` — see "Profiling". No pipeline logic of its own.
 - `lib/` — the actual pipeline, split so each module only depends on `geometry` (a DAG,
   no cycles) and so the pipeline stages are independently testable via plain imports:
   - `lib/geometry.py` — `Style`, `Transform`, `Segment`+subclasses (`Line`, `Arc`,
