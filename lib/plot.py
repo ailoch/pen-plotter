@@ -42,10 +42,11 @@ class PlotSettings:
     objectHeightChange: bool = False
     style: str = "line type"
     styleLineOrder: list[str] = field(default_factory=list)
-    optimizePathOrder: bool = True
 
     # debug settings
     showBoundingBoxes: bool = False
+    optimizePathOrder: bool = True
+    profiling: bool = False # if true, profiles _Process.py's pipeline and prints the slowest functions
 
     def initFromJson(self, path):
         with open(path) as f:

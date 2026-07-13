@@ -31,7 +31,7 @@
         "showPenPos": true, // if false, nozzle position will be shown in slicer
         "objectHeightChange": true, // if true, slightly increases the height of every other object so they show as seperate layers when viewed in the slicer
 
-        "style": "instruction", // options are "line type", "instruction", and "segment"
+        "style": "line type", // options are "line type", "instruction", and "segment"
           // line type: shows role of lines in slicer view (styleLineOrder is ignored)
           // instruction: shows g1/g2/g3 instructions with different colors
           //  colors are set by the 1st 3 items in styleLineOrder
@@ -44,6 +44,7 @@
     // debug settings
     "debug": {
         "showBoundingBoxes": false,
-        "optimizePathOrder": true // if false, path order will be the same as in the input file
+        "optimizePathOrder": true, // if false, path order will be the same as in the input file
+        "profiling": false // if true, profiles the pipeline and prints the slowest functions
     }
 }
