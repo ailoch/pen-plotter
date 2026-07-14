@@ -143,6 +143,30 @@ class Segment(ABC):
     def extrema(self) -> list[float]:
         """Return the x and y extrema of a segment"""
 
+    # samples this segment into points no more than tolerance (mm) from the true
+    # curve, including both endpoints. Cheap recursive midpoint subdivision -
+    # safe here because a single Segment is smooth (no interior corners), so the
+    # max chord deviation is always near the middle. subclasses with an exact
+    # formula (Line, Arc) override this
+    def toPoints(self, tolerance: float) -> list[complex]:
+        points: list[complex] = []
+        def recurse(t0: float, t1: float, p0: complex, p1: complex):
+            pm = self.point((t0 + t1) / 2)
+            chord = p1 - p0
+            if abs(chord) < 1e-9:
+                dev = abs(pm - p0)
+            else:
+                dev = abs(((pm - p0) * chord.conjugate() / abs(chord)).imag)
+            if dev <= tolerance:
+                points.append(p0)
+            else:
+                mid = (t0 + t1) / 2
+                recurse(t0, mid, p0, pm)
+                recurse(mid, t1, pm, p1)
+        recurse(0.0, 1.0, self.point(0.0), self.point(1.0))
+        points.append(self.point(1.0))
+        return points
+
     # return (xmin, ymin, xmax, ymax)
     def bounds(self) -> tuple[float, float, float, float]:
         candidates: list[float] = [0, 1] # start/end of segment
@@ -184,6 +208,9 @@ class Line(Segment):
     def extrema(self) -> list[float]:
         # lines have no extrema
         return []
+
+    def toPoints(self, tolerance: float) -> list[complex]:
+        return [self.start, self.end]
 
 @dataclass
 class Arc(Segment):
@@ -547,12 +574,12 @@ class Path:
         if chordLen < 1e-9:
             maxDev = max((abs(p - p0) for p in samplePts), default=0.0)
         else:
-            chordDir = chord / chordLen
+            chordConj = (chord / chordLen).conjugate()
             # distance to the finite segment [p0,p1], not perpendicular
             # deviation from the infinite line - catches a curve that travels
             # out along the chord and doubles back past an endpoint
             def _distToChordSegment(p: complex) -> float:
-                rel = (p - p0) * chordDir.conjugate()
+                rel = (p - p0) * chordConj
                 along = max(0.0, min(chordLen, rel.real))
                 return math.hypot(rel.real - along, rel.imag)
             maxDev = max((_distToChordSegment(p) for p in samplePts), default=0.0)
@@ -565,16 +592,17 @@ class Path:
             pm = self.point((t0 + t1) / 2)
             arc = Arc.fromThreePoints(p0, pm, p1, maxRadiusToChord=self._MAX_RADIUS_TO_CHORD)
             if arc is not None:
+                center, r = arc.center, abs(arc.u)
                 # distance to the finite swept arc, not radial deviation from
                 # the underlying circle - catches a point that's radially
                 # close but at a totally different, unswept angle
                 def _distToArcSegment(p: complex) -> float:
-                    rel = p - arc.center
+                    rel = p - center
                     theta = math.atan2(-rel.imag, rel.real)
                     u = arc._thetaToT(theta)
                     if u is None:
                         return min(abs(p - arc.point(0.0)), abs(p - arc.point(1.0)))
-                    return abs(abs(rel) - abs(arc.u))
+                    return abs(abs(rel) - r)
                 maxRadialDev = max((_distToArcSegment(p) for p in samplePts), default=0.0)
                 if maxRadialDev <= tolerance:
                     return arc
@@ -668,34 +696,62 @@ class Path:
 
     # returns a new Path made of only Lines/circular Arcs, fit to within
     # tolerance (mm) of the original curves. non-mutating. if allowArcs is
-    # False, the result is Lines only. fits can span across original segment
-    # boundaries (see _fitRange), so e.g. consecutive collinear Lines merge
-    # into one, and a run of short Lines tracing a circular arc becomes a
-    # couple of Arcs.
+    # False, the result is Lines only.
+    #
+    # with allowArcs, segments already in final form (Lines, circular Arcs) are
+    # passed through untouched; only curves that still need fitting (Beziers,
+    # non-circular Arcs) go through the bidirectional fitter, which fits across
+    # their shared boundaries (see _fitRange) - so already-tessellated input
+    # (e.g. infill loops) is nearly free.
     def tessellate(self, tolerance: float, maxDepth: int, allowArcs: bool = True) -> "Path":
         n = len(self.segments)
         if n == 0:
             return Path([])
 
+        # Lines-only output is only ever consumed as a flattened polygon (infill),
+        # which needs points within tolerance, not a minimal segment count - so
+        # skip the fitter entirely and cheaply subdivide each segment to points
         if not allowArcs:
-            return Path(self._fitRange(0.0, 1.0, tolerance, False))
+            flat: list[Segment] = []
+            for segment in self.segments:
+                pts = segment.toPoints(tolerance)
+                flat.extend(Line(pts[i], pts[i+1]) for i in range(len(pts) - 1))
+            return Path(flat)
 
-        # already-circular Arc segments are kept atomic (hard boundaries): a
-        # full circle has start==end, so fitting across it would hit
-        # Arc.fromThreePoints' p0==p1 degenerate case and collapse to tiny Lines
+        def isSimple(segment: Segment) -> bool:
+            if isinstance(segment, Line):
+                return True
+            return isinstance(segment, Arc) and abs(abs(segment.u) - abs(segment.v)) <= tolerance
+
         newSegments: list[Segment] = []
         runStart: int | None = None
+
+        # merges an exactly-collinear, same-direction consecutive Line into the
+        # previous one instead of appending it - joins redundant straight splits
+        # (a passed-through Line meeting the Line a neighboring fit ended on).
+        # Exact collinearity only, so it never approximates a curve as one line
+        def appendMerging(segment: Segment):
+            if isinstance(segment, Line) and newSegments and isinstance(newSegments[-1], Line):
+                prev = newSegments[-1]
+                d0, d1 = prev.end - prev.start, segment.end - segment.start
+                cross = d0.real*d1.imag - d0.imag*d1.real
+                if abs(cross) <= 1e-9 * abs(d0) * abs(d1) and (d0.real*d1.real + d0.imag*d1.imag) >= 0:
+                    newSegments[-1] = Line(prev.start, segment.end)
+                    return
+            newSegments.append(segment)
+
         for i, segment in enumerate(self.segments):
-            isAtomicArc = isinstance(segment, Arc) and abs(abs(segment.u) - abs(segment.v)) <= tolerance
-            if isAtomicArc:
+            if isSimple(segment):
                 if runStart is not None:
-                    newSegments.extend(self._fitRange(runStart / n, i / n, tolerance, True))
+                    for s in self._fitRange(runStart / n, i / n, tolerance, allowArcs):
+                        appendMerging(s)
                     runStart = None
-                newSegments.append(segment)
+                appendMerging(segment)
             elif runStart is None:
                 runStart = i
         if runStart is not None:
-            newSegments.extend(self._fitRange(runStart / n, 1.0, tolerance, True))
+            for s in self._fitRange(runStart / n, 1.0, tolerance, allowArcs):
+                appendMerging(s)
 
         return Path(newSegments)
 

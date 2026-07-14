@@ -23,40 +23,41 @@ def _tryFit(points: list[complex], tolerance: float) -> Segment | None:
     if len(points) <= 2:
         return Line(p0, p1)
 
-    # points are checked against a fit candidate, plus the midpoint of every
-    # CONSECUTIVE pair - pyclipper always connects consecutive points with a
-    # literal straight sub-edge (an offset polygon's straight edges are only ever
-    # given as their two sparse endpoints; curves are represented by densely
-    # sampling many points, never by hidden curvature inside a single edge), so
-    # checking those midpoints is free (always a valid test) and catches a real
-    # bug: a long, sparsely-sampled straight edge (e.g. between two true polygon
-    # vertices) gives the deviation checks below nothing to fail on if the ONLY
-    # other points in this range are a tight, far-off cluster (e.g. a small
-    # JT_ROUND fillet at a reflex corner) - a circumcircle threading through the
-    # far endpoints and that cluster can satisfy tolerance for every given point
-    # while still cutting several mm across the middle of what should be a
-    # straight edge
-    checkPoints = points[1:-1] + [(points[i] + points[i+1]) / 2 for i in range(len(points) - 1)]
+    interior = points[1:-1]
 
     # --- try a Line ---
+    # distance to the finite chord SEGMENT is convex, so a straight sub-edge
+    # between two consecutive points can't bulge past both its endpoints - the
+    # given points alone bound it, no midpoints needed
     chord = p1 - p0
     chordLen = abs(chord)
     if chordLen < 1e-9:
-        maxDev = max((abs(p - p0) for p in checkPoints), default=0.0)
+        maxDev = max((abs(p - p0) for p in interior), default=0.0)
     else:
-        chordDir = chord / chordLen
-        maxDev = max((abs(((p - p0) * chordDir.conjugate()).imag) for p in checkPoints), default=0.0)
+        chordConj = (chord / chordLen).conjugate()
+        def _distToChordSegment(p: complex) -> float:
+            rel = (p - p0) * chordConj
+            along = max(0.0, min(chordLen, rel.real))
+            return math.hypot(rel.real - along, rel.imag)
+        maxDev = max((_distToChordSegment(p) for p in interior), default=0.0)
 
     if maxDev <= tolerance:
         return Line(p0, p1)
 
     # --- try a circular Arc via 3-point circumcircle ---
+    # radial deviation from a circle is NOT convex, so a long, sparsely-sampled
+    # straight sub-edge can bulge several mm from the arc between two given
+    # points that both satisfy tolerance - so also check the midpoint of every
+    # consecutive pair (pyclipper always connects consecutive points with a
+    # literal straight sub-edge, so these midpoints are always valid samples)
     midIdx = len(points) // 2
     pm = points[midIdx]
 
     arc = Arc.fromThreePoints(p0, pm, p1)
     if arc is not None:
-        maxRadialDev = max((abs(abs(p - arc.center) - abs(arc.u)) for p in checkPoints), default=0.0)
+        center, r = arc.center, abs(arc.u)
+        midpoints = [(points[i] + points[i+1]) / 2 for i in range(len(points) - 1)]
+        maxRadialDev = max((abs(abs(p - center) - r) for p in interior + midpoints), default=0.0)
         if maxRadialDev <= tolerance:
             return arc
 
@@ -196,14 +197,13 @@ def generateInfill(document: Document, spacing: float, tolerance: float, maxDept
         # previous loop) to avoid compounding discretization drift - each Execute
         # call recomputes fresh from the paths added below, just with a larger
         # cumulative delta
-        #
-        # JT_ROUND: rounds gaps at REFLEX (concave) corners during the inward
-        # offset (e.g. the inner point of a V-notch, or a self-intersecting
-        # shape's crossing-derived cusps) - _loopToPath then reconstructs those as
-        # real Arcs. Preferred look over JT_MITER's sharp corners there; confirmed
-        # unrelated to the spurious-arc bug on horse.svg's legs (that was genuine
-        # sub-visual curvature in the source path, not a join-type artifact).
         pco = pyclipper.PyclipperOffset()
+        # how finely JT_ROUND flattens its fillet arcs. pyclipper's default
+        # (0.25 scaled units ~ 2.5nm here) is far finer than tolerance needs and
+        # floods each loop with points that _loopToPath then has to re-fit;
+        # tol/4 keeps fillet deviation negligible while cutting the point count
+        # (and infill time) several-fold
+        pco.ArcTolerance = tolerance / 4 * _SCALE
         pco.AddPaths(region, pyclipper.JT_ROUND, pyclipper.ET_CLOSEDPOLYGON)
 
         loops = []
