@@ -547,6 +547,7 @@ class Path:
         firstSeg = min(int(t0 * n), n - 1)
         lastSeg = min(int(t1 * n), n - 1) if t1 < 1.0 else n - 1
         sampleTs: list[float] = []
+        allLines = True
         for segIdx in range(firstSeg, lastSeg + 1):
             segT0 = max(t0, segIdx / n)
             segT1 = min(t1, (segIdx + 1) / n)
@@ -554,37 +555,38 @@ class Path:
                 continue
             if segT0 > t0:
                 sampleTs.append(segT0) # exact boundary - see corner note above
-            for i in range(1, self._SAMPLES_PER_SEGMENT + 1):
-                sampleTs.append(segT0 + (segT1 - segT0) * (i / (self._SAMPLES_PER_SEGMENT + 1)))
-
-        # t0/t1 themselves are usually not original path points but wherever a
-        # neighboring range's search happened to stop, so add a few samples
-        # geometrically close to each in case a feature sits just past one
-        span = t1 - t0
-        if span > 1e-12:
-            for frac in (0.0005, 0.003, 0.02):
-                sampleTs.append(t0 + span * frac)
-                sampleTs.append(t1 - span * frac)
+            if isinstance(self.segments[segIdx], Line):
+                sampleTs.append((segT0 + segT1) / 2)
+            else:
+                allLines = False
+                for i in range(1, self._SAMPLES_PER_SEGMENT + 1):
+                    sampleTs.append(segT0 + (segT1 - segT0) * (i / (self._SAMPLES_PER_SEGMENT + 1)))
 
         samplePts = [self.point(t) for t in sampleTs]
 
         # --- try a Line ---
+        # early-exits on the first out-of-tolerance sample instead of scanning
+        # every point to find the true max - most candidates fail the Line
+        # check quickly when there's real curvature, so this avoids paying for
+        # the full sample set on the common failing case
         chord = p1 - p0
         chordLen = abs(chord)
+        fits = True
         if chordLen < 1e-9:
-            maxDev = max((abs(p - p0) for p in samplePts), default=0.0)
+            for p in samplePts:
+                if abs(p - p0) > tolerance:
+                    fits = False
+                    break
         else:
             chordConj = (chord / chordLen).conjugate()
-            # distance to the finite segment [p0,p1], not perpendicular
-            # deviation from the infinite line - catches a curve that travels
-            # out along the chord and doubles back past an endpoint
-            def _distToChordSegment(p: complex) -> float:
+            for p in samplePts:
                 rel = (p - p0) * chordConj
                 along = max(0.0, min(chordLen, rel.real))
-                return math.hypot(rel.real - along, rel.imag)
-            maxDev = max((_distToChordSegment(p) for p in samplePts), default=0.0)
+                if math.hypot(rel.real - along, rel.imag) > tolerance:
+                    fits = False
+                    break
 
-        if maxDev <= tolerance:
+        if fits:
             return Line(p0, p1)
 
         # --- try a circular Arc via 3-point circumcircle ---
@@ -593,18 +595,30 @@ class Path:
             arc = Arc.fromThreePoints(p0, pm, p1, maxRadiusToChord=self._MAX_RADIUS_TO_CHORD)
             if arc is not None:
                 center, r = arc.center, abs(arc.u)
-                # distance to the finite swept arc, not radial deviation from
-                # the underlying circle - catches a point that's radially
-                # close but at a totally different, unswept angle
-                def _distToArcSegment(p: complex) -> float:
-                    rel = p - center
-                    theta = math.atan2(-rel.imag, rel.real)
-                    u = arc._thetaToT(theta)
-                    if u is None:
-                        return min(abs(p - arc.point(0.0)), abs(p - arc.point(1.0)))
-                    return abs(abs(rel) - r)
-                maxRadialDev = max((_distToArcSegment(p) for p in samplePts), default=0.0)
-                if maxRadialDev <= tolerance:
+                fits = True
+                if allLines:
+                    # a range of pure Lines has no interior curvature of its own
+                    # (each sample is already an exact data point, plus each
+                    # segment's own midpoint - see above), so there's no "out
+                    # and back" risk within any one sample gap: plain radial
+                    # deviation is enough, and skips the angle math below
+                    for p in samplePts:
+                        if abs(abs(p - center) - r) > tolerance:
+                            fits = False
+                            break
+                else:
+                    # distance to the finite swept arc, not radial deviation
+                    # from the underlying circle - catches a point that's
+                    # radially close but at a totally different, unswept angle
+                    for p in samplePts:
+                        rel = p - center
+                        theta = math.atan2(-rel.imag, rel.real)
+                        u = arc._thetaToT(theta)
+                        dev = min(abs(p - arc.point(0.0)), abs(p - arc.point(1.0))) if u is None else abs(abs(rel) - r)
+                        if dev > tolerance:
+                            fits = False
+                            break
+                if fits:
                     return arc
 
         return None
@@ -702,8 +716,11 @@ class Path:
     # passed through untouched; only curves that still need fitting (Beziers,
     # non-circular Arcs) go through the bidirectional fitter, which fits across
     # their shared boundaries (see _fitRange) - so already-tessellated input
-    # (e.g. infill loops) is nearly free.
-    def tessellate(self, tolerance: float, maxDepth: int, allowArcs: bool = True) -> "Path":
+    # (e.g. re-tessellating for gcode output) is nearly free. Set fitLines=True
+    # to instead treat every Line as raw data to be re-fit too (e.g. a dense
+    # polyline of individually-meaningless points, like a pyclipper offset
+    # result) - see Path.fromPoints.
+    def tessellate(self, tolerance: float, maxDepth: int, allowArcs: bool = True, fitLines: bool = False) -> "Path":
         n = len(self.segments)
         if n == 0:
             return Path([])
@@ -720,7 +737,7 @@ class Path:
 
         def isSimple(segment: Segment) -> bool:
             if isinstance(segment, Line):
-                return True
+                return not fitLines
             return isinstance(segment, Arc) and abs(abs(segment.u) - abs(segment.v)) <= tolerance
 
         newSegments: list[Segment] = []

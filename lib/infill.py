@@ -1,6 +1,4 @@
-import math
-
-from lib.geometry import Path, Document, Line, Arc, Segment
+from lib.geometry import Path, Document
 
 try:
     import pyclipper
@@ -14,143 +12,6 @@ def _toClipperPath(points: list[complex]) -> list[tuple[int, int]]:
 
 def _fromClipperPath(path) -> list[complex]:
     return [complex(x / _SCALE, y / _SCALE) for x, y in path]
-
-# tries to fit the ENTIRE given point range to a single Line or circular Arc
-# within tolerance (mm); returns None if neither fits. Line is tried first so a
-# genuinely (or near-) straight range is never represented as an unnecessary arc
-def _tryFit(points: list[complex], tolerance: float) -> Segment | None:
-    p0, p1 = points[0], points[-1]
-    if len(points) <= 2:
-        return Line(p0, p1)
-
-    interior = points[1:-1]
-
-    # --- try a Line ---
-    # distance to the finite chord SEGMENT is convex, so a straight sub-edge
-    # between two consecutive points can't bulge past both its endpoints - the
-    # given points alone bound it, no midpoints needed
-    chord = p1 - p0
-    chordLen = abs(chord)
-    if chordLen < 1e-9:
-        maxDev = max((abs(p - p0) for p in interior), default=0.0)
-    else:
-        chordConj = (chord / chordLen).conjugate()
-        def _distToChordSegment(p: complex) -> float:
-            rel = (p - p0) * chordConj
-            along = max(0.0, min(chordLen, rel.real))
-            return math.hypot(rel.real - along, rel.imag)
-        maxDev = max((_distToChordSegment(p) for p in interior), default=0.0)
-
-    if maxDev <= tolerance:
-        return Line(p0, p1)
-
-    # --- try a circular Arc via 3-point circumcircle ---
-    # radial deviation from a circle is NOT convex, so a long, sparsely-sampled
-    # straight sub-edge can bulge several mm from the arc between two given
-    # points that both satisfy tolerance - so also check the midpoint of every
-    # consecutive pair (pyclipper always connects consecutive points with a
-    # literal straight sub-edge, so these midpoints are always valid samples)
-    midIdx = len(points) // 2
-    pm = points[midIdx]
-
-    arc = Arc.fromThreePoints(p0, pm, p1)
-    if arc is not None:
-        center, r = arc.center, abs(arc.u)
-        midpoints = [(points[i] + points[i+1]) / 2 for i in range(len(points) - 1)]
-        maxRadialDev = max((abs(abs(p - center) - r) for p in interior + midpoints), default=0.0)
-        if maxRadialDev <= tolerance:
-            return arc
-
-    return None
-
-# fits a polyline (a discrete point list, e.g. from pyclipper) to a sequence of
-# Lines/circular Arcs within tolerance (mm). mirrors Segment._fitToTolerance, but
-# works on a discrete point list rather than a continuous point(t) function
-#
-# greedily consumes the LARGEST prefix that still fits a single Line/Arc,
-def _fitPointsToTolerance(points: list[complex], tolerance: float) -> list[Segment]:
-    segments: list[Segment] = []
-    i = 0
-    n = len(points)
-    while i < n - 1:
-        remaining = points[i:]
-        m = len(remaining)
-
-        lo = 2
-        found = _tryFit(remaining[:2], tolerance)
-        assert found is not None # a 2-point range always succeeds
-        size = 2
-        hi = m
-        while size < m:
-            nextSize = min(size * 2, m)
-            fit = _tryFit(remaining[:nextSize], tolerance)
-            if fit is None:
-                hi = nextSize
-                break
-            lo, found, size = nextSize, fit, nextSize
-        else:
-            segments.append(found) # whole remaining range fit
-            break
-
-        # binary search between the last known-good size (lo) and first
-        # known-bad size (hi) found by the gallop above
-        while hi - lo > 1:
-            mid = (lo + hi) // 2
-            fit = _tryFit(remaining[:mid], tolerance)
-            if fit is not None:
-                lo, found = mid, fit
-            else:
-                hi = mid
-
-        segments.append(found)
-        i += lo - 1
-    return segments
-
-# angle above which a polyline vertex is treated as a genuine corner that arc
-# fitting must never span across. any 3 non-collinear points define SOME circle,
-# so a large-radius one can closely hug two straight edges meeting at a gentle
-# angle - unlike Segment._fitToTolerance, which only ever fits within a single
-# already-smooth original segment (never across a boundary between two
-# different segments), _fitPointsToTolerance has no such boundary information
-# from a flat point list alone, so real corners must be found first. comfortably
-# above the few-degrees-per-step turning angle of a finely-tessellated curve
-# (see Arc.toPoints) and comfortably below typical polygon corner angles
-_CORNER_ANGLE_THRESHOLD = math.radians(15)
-
-# returns indices of points where the polyline turns sharply (treating the list
-# as a closed loop, so index 0's corner-ness is checked too)
-def _findCornerIndices(points: list[complex], angleThreshold: float) -> list[int]:
-    n = len(points)
-    corners = []
-    for i in range(n):
-        prevDir = points[i] - points[i - 1] # Python's negative indexing wraps naturally
-        nextDir = points[(i + 1) % n] - points[i]
-        if abs(prevDir) < 1e-9 or abs(nextDir) < 1e-9:
-            continue
-        cosAngle = (prevDir.real*nextDir.real + prevDir.imag*nextDir.imag) / (abs(prevDir) * abs(nextDir))
-        cosAngle = max(-1.0, min(1.0, cosAngle))
-        if math.acos(cosAngle) > angleThreshold:
-            corners.append(i)
-    return corners
-
-# builds a closed Path from a polygon's vertices (as returned by pyclipper), fit
-# to lines/arcs within tolerance. splits at detected corners first (see
-# _CORNER_ANGLE_THRESHOLD) and fits each smooth run between them independently,
-# so a fit never spans across a genuine corner. a loop with no detected corners
-# (e.g. a circle) is fit as a whole, closing back to the start - exactly like a
-# continuous curve's full [0,1] range would be
-def _loopToPath(points: list[complex], tolerance: float) -> Path:
-    corners = _findCornerIndices(points, _CORNER_ANGLE_THRESHOLD)
-    if not corners:
-        return Path(_fitPointsToTolerance(points + [points[0]], tolerance))
-
-    segments: list[Segment] = []
-    for i in range(len(corners)):
-        start = corners[i]
-        end = corners[(i + 1) % len(corners)]
-        run = points[start:end + 1] if end > start else points[start:] + points[:end + 1]
-        segments.extend(_fitPointsToTolerance(run, tolerance))
-    return Path(segments)
 
 # generates concentric infill loops for every PathObject with a set fill color,
 # appending them as new subpaths to object.geometry (the original perimeter
@@ -200,7 +61,7 @@ def generateInfill(document: Document, spacing: float, tolerance: float, maxDept
         pco = pyclipper.PyclipperOffset()
         # how finely JT_ROUND flattens its fillet arcs. pyclipper's default
         # (0.25 scaled units ~ 2.5nm here) is far finer than tolerance needs and
-        # floods each loop with points that _loopToPath then has to re-fit;
+        # floods each loop with points that tessellate() then has to re-fit;
         # tol/4 keeps fillet deviation negligible while cutting the point count
         # (and infill time) several-fold
         pco.ArcTolerance = tolerance / 4 * _SCALE
@@ -224,4 +85,5 @@ def generateInfill(document: Document, spacing: float, tolerance: float, maxDept
             realPts = _fromClipperPath(loopPts)
             if len(realPts) < 3:
                 continue
-            obj.geometry.append(_loopToPath(realPts, tolerance))
+            loop = Path.fromPoints(realPts, closed=True)
+            obj.geometry.append(loop.tessellate(tolerance, maxDepth, fitLines=True))

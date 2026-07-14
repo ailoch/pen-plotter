@@ -163,66 +163,27 @@ triggering a real run.
      `JT_ROUND` caused spurious arcs on `horse.svg`'s legs turned out to be wrong
      (see "Arc recovery" below). `PyclipperOffset.ArcTolerance` is set to
      `tolerance/4` (scaled) — pyclipper's own default is far finer than needed and
-     floods each loop with points `_loopToPath` then has to re-fit; the coarser
-     value cut loop point counts several-fold with no visible quality loss
-     (profiled: a major share of `generateInfill`'s runtime on `horse.svg`).
-   - **Arc recovery**: pyclipper's offset output is plain polylines, so
-     `_fitPointsToTolerance`/`_loopToPath` (via the shared `_tryFit` helper) re-fit
-     each loop back to `Line`/`Arc` segments (a discrete-point-list analog of
-     `Path`'s own bidirectional fitter — see "Adaptive tessellation" below) so a
-     circular fill's loops come back out as a couple of `G2`/`G3` arcs instead of a
-     many-sided polygon of `G1`s. Corners must be detected first
-     (`_findCornerIndices`, turning angle > `_CORNER_ANGLE_THRESHOLD`) and never
-     fit across, since any 3 non-collinear points define *some* circumcircle, and a
-     large-radius one can closely hug two straight edges meeting at a gentle angle
-     if corners aren't excluded first (found via `testDrawing.svg`'s `triangle`,
-     which has 3 sharp corners plus one genuinely curved edge — a good regression
-     case for this). `Path`'s own fitter hits this exact same bug class in a
-     different form (see `MAX_RADIUS_TO_CHORD` in "Adaptive tessellation" below) —
-     `Arc.fromThreePoints`' circumcircle math is fundamentally numerically unstable
-     for near-collinear inputs regardless of which fitter calls it.
-   - **`_tryFit`'s midpoint safety check**: a candidate Arc is validated not just
-     against the points pyclipper actually gave it, but also against the midpoint of
-     every *consecutive* pair of those points. pyclipper always connects consecutive
-     points with a literal straight sub-edge (a polygon's straight edges are only
-     ever given as their two sparse endpoints; curves are represented by densely
-     sampling many points, never by hidden curvature inside one edge), so this check
-     is free (always valid) and catches a real bug: a long, sparsely-sampled
-     straight edge next to a tiny, densely-sampled `JT_ROUND` fillet at a reflex
-     corner gave the old deviation checks nothing to fail on — a circumcircle
-     threading through the two far polygon vertices and the fillet cluster could
-     satisfy tolerance against every *given* point while still cutting several mm
-     across the middle of what should be a straight edge. Confirmed empirically on
-     `testDrawing.svg`'s `nonzeroFill`: a spurious 18.8mm-radius arc deviated 2mm
-     from the true edge at its unsampled midpoint. The candidate **Line** check
-     doesn't need this: distance to a finite chord *segment* (clamped, not
-     perpendicular-only) is convex, so the two given endpoints alone already bound
-     every point in between — only the non-convex Arc check needs the extra
-     midpoints, so they're computed lazily, only if the (cheaper) Line check fails.
-   - **`_fitPointsToTolerance`'s galloping search**: greedily consumes the largest
-     prefix of the remaining points that still fits a single Line/Arc, rather than
-     blindly bisecting the remaining range in half whenever the whole thing
-     doesn't fit. For a curve with genuinely varying curvature (e.g. an ellipse —
-     unlike a circle, where any 3 points define exactly the right circle), naive
-     halving converges to many tiny `Line`s well before it reaches the true
-     tolerance-limited extent of a good `Arc`, since each half that still fails
-     just gets bisected again regardless of where the real boundary is (this made
-     `filledEllipse`'s infill mostly straight `G1`s even on its more-curved
-     regions). The largest valid prefix is found via exponential ("galloping")
-     search — try 2, 4, 8, ... points, doubling — followed by a binary search
-     between the last successful size and the first failed one, rather than a
-     single binary search across the *full* remaining range every step: when most
-     accepted segments end up short (common in practice), a plain binary search's
-     first probe against the full remaining range is wasted work on every outer
-     step, making the whole pass `O(n²)` (measured: infill generation on
-     `horse.svg` went from 0.88s to 13.27s with a naive full-range binary search).
-     Galloping keeps each step's cost proportional to the segment size actually
-     found, restoring `O(n)`-amortized behavior (0.88s → 1.69s, the remainder
-     being genuinely more/better-placed arcs, not overhead). This also means
-     `_fitPointsToTolerance`/`_loopToPath` no longer take a `maxDepth` — each outer
-     step is guaranteed to consume at least one new point (a 2-point range always
-     fits), so termination doesn't need a recursion-depth safety net the way the
-     continuous fitter's `maxDepth` does.
+     floods each loop with points that then have to be re-fit; the coarser value
+     cut loop point counts several-fold with no visible quality loss (profiled: a
+     major share of `generateInfill`'s runtime on `horse.svg`).
+   - **Arc recovery**: pyclipper's offset output is plain polylines, so each loop
+     is wrapped with `Path.fromPoints(points, closed=True)` and re-fit via
+     `Path`'s own bidirectional fitter — `path.tessellate(tolerance, maxDepth,
+     fitLines=True)` (see "Adaptive tessellation" below) — so a circular fill's
+     loops come back out as a couple of `G2`/`G3` arcs instead of a many-sided
+     polygon of `G1`s. `fitLines=True` is required here: `fromPoints` builds every
+     point-to-point hop as its own `Line`, and `tessellate`'s default fast path
+     treats *any* `Line` as already-final (see "Adaptive tessellation"), which
+     would otherwise pass all of them through untouched, never producing an `Arc`.
+     Infill previously had its own parallel discrete-point-list fitter
+     (`_tryFit`/`_fitPointsToTolerance`/`_findCornerIndices`, since removed) that
+     duplicated `Path`'s continuous one; the two were unified so bug fixes (corner
+     detection, the numerically-unstable-circumcircle guard, etc.) only need to
+     happen once. `Path`'s fitter hits the same corner-vs-circumcircle bug class
+     `_tryFit` used to guard against (see `MAX_RADIUS_TO_CHORD` in "Adaptive
+     tessellation" below) — `Arc.fromThreePoints`' circumcircle math is
+     fundamentally numerically unstable for near-collinear inputs regardless of
+     which fitter calls it.
    - Gated by `isFillable()` (`lib/geometry.py`), not `isClosed()` — see the
      `Path.isFillable()` entry above.
    - **Known non-bug**: `horse.svg`'s front legs show short alternating `Line`/`Arc`
@@ -347,11 +308,11 @@ unused by this fitter (see "no depth cap" below).
      back]`.
   A minimal range always fits a `Line` (deviation → 0 as the range shrinks), so `tf`
   always makes forward progress and this always terminates — **no `maxDepth` cap
-  needed**, mirroring the same reasoning behind infill's galloping-search rewrite.
+  needed**.
 - **`Path._greedyExtent`**: finds the farthest extent via exponential ("galloping")
-  growth then a binary search between the last success and first failure — the same
-  technique as infill's `_fitPointsToTolerance` (O(n)-amortized, avoids the O(n²) trap
-  of binary-searching the full remaining range every step). The returned extent is only
+  growth then a binary search between the last success and first failure
+  (O(n)-amortized, avoids the O(n²) trap of binary-searching the full remaining range
+  every step). The returned extent is only
   approximate (stops once within ~2% of a segment's length rather than fully
   converging) — a slightly-short extent just shifts a little more work onto the
   neighboring fit, never risks exceeding tolerance itself.
@@ -380,23 +341,44 @@ unused by this fitter (see "no depth cap" below).
   radius/chord ratio this extreme is itself the signal that the fit is numerical noise,
   not real gentle curvature; rejected outright rather than trusted.
 - **Segments already in final form are passed through untouched, not re-fit**: a `Line`
-  always, and (with `allowArcs`) an already-circular `Arc` (`abs(abs(u)-abs(v)) <=
-  tolerance`). Only the remaining curves (Beziers, non-circular `Arc`s) go through the
-  bidirectional fitter, fit across their shared boundaries same as before. This is a
-  performance-critical fast path: `Plotter.addPath` re-tessellates every object's full
-  `geometry`, including infill's own already-`Line`/`Arc` loops (see "Infill
-  generation" above) — without the passthrough, `_tryFitRange` was being re-run on
-  already-fit geometry on every plot, which dominated total runtime (profiled: cut
-  `horse.svg`'s full pipeline from ~16s to ~1s). Circular-`Arc` atomicity also sidesteps
-  a real degeneracy: a full-circle `Arc` has `start == end`, so `Arc.fromThreePoints`
-  would see `p0 == p1` and (correctly) refuse a circumcircle, forcing the whole circle
-  down to tiny `Line` fallbacks if it were ever fit across.
+  always (unless `fitLines=True`, see below), and (with `allowArcs`) an already-circular
+  `Arc` (`abs(abs(u)-abs(v)) <= tolerance`). Only the remaining curves (Beziers,
+  non-circular `Arc`s) go through the bidirectional fitter, fit across their shared
+  boundaries same as before. This is a performance-critical fast path:
+  `Plotter.addPath` re-tessellates every object's full `geometry`, including infill's
+  own already-`Line`/`Arc` loops (see "Infill generation" above) — without the
+  passthrough, `_tryFitRange` was being re-run on already-fit geometry on every plot,
+  which dominated total runtime (profiled: cut `horse.svg`'s full pipeline from ~16s
+  to ~1s). Circular-`Arc` atomicity also sidesteps a real degeneracy: a full-circle
+  `Arc` has `start == end`, so `Arc.fromThreePoints` would see `p0 == p1` and
+  (correctly) refuse a circumcircle, forcing the whole circle down to tiny `Line`
+  fallbacks if it were ever fit across.
   Passthrough means adjacent collinear `Line`s no longer get merged by the fitter
   itself (each already fits, so neither joins a `_fitRange` run) — `appendMerging`
   restores that directly instead, in O(1) per segment: appending a new `Line` checks if
   it's *exactly* collinear and same-direction with the previous output `Line` (cross
   product ~0, dot product ≥ 0) and merges into it if so, rather than approximating via
   the fitter. Exact-only, so it never risks representing a real curve as one flat line.
+- **`fitLines=True`** treats `Line` segments as raw data to be re-fit too, instead of
+  already-final. Needed for `Path.fromPoints(points).tessellate(..., fitLines=True)`
+  (used by infill's arc recovery, see "Infill generation" above): `fromPoints` turns
+  every point-to-point hop into its own `Line`, and without `fitLines` the passthrough
+  above would emit all of them untouched, never producing an `Arc`. A `Line` segment
+  has no curvature hidden inside it (unlike a Bezier/non-circular `Arc`), so when a
+  candidate range's touched segments are *all* `Line`s, `_tryFitRange` skips
+  `_SAMPLES_PER_SEGMENT`'s interior resampling for it — a segment's own boundary point
+  plus its midpoint (equivalent to checking every original data point plus every
+  consecutive pair's midpoint) is exactly as informative as 10 interpolated points
+  would be, and skips the near-boundary geometric samples and the Arc check's
+  angle-clamping (`_thetaToT`) too, using plain radial deviation instead (safe here
+  since there's no per-segment curvature to hide an "out and back" inside). This isn't
+  just an optimization for typical curve segments — for `fitLines`'s actual use case
+  (a raw pyclipper polygon, up to thousands of points per loop), the full per-segment
+  sampling multiplies cost with point count and is the difference between infill
+  generation taking ~1s and ~40s on `horse.svg` (measured). `_tryFitRange` also
+  early-exits on the first out-of-tolerance sample instead of scanning every one to
+  find the true max deviation, since most candidate ranges fail quickly once real
+  curvature is present.
 - **`allowArcs=False` skips the fitter entirely**: infill's flattened polygons only need
   points within tolerance, not a minimal segment count, so `tessellate(allowArcs=False)`
   just calls each segment's own `Segment.toPoints(tolerance)` (cheap recursive midpoint
