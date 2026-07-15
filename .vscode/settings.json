@@ -1,3 +1,6 @@
 {
-    "files.trimTrailingWhitespace": true
+    "files.trimTrailingWhitespace": true,
+    "files.associations": {
+    "**/config/*.json": "jsonc"
+    }
 }

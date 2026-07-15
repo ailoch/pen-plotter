@@ -19,8 +19,8 @@
         "infillSpacing": 0.3, // distance (mm) between concentric infill loops; <= 0 disables infill
         "loadDelay": 3, // wait this long for user to load pen
 
-        "prefixFile": "Append/startCode.gcode",
-        "suffixFile": "Append/endCode.gcode"
+        "prefixFile": "gcode_templates/bambu_p1s_prefix.gcode",
+        "suffixFile": "gcode_templates/bambu_p1s_suffix.gcode"
     },
 
     // controls how the gcode looks in bambu studio

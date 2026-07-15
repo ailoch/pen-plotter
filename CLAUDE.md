@@ -38,21 +38,21 @@ Bidirectional greedy fitter: reduces any curve to Line/Arc within tolerance, wor
 
 ## Error Handling
 
-**Invalid settings file** — `PlotSettings.initFromJson` catches parse errors (JSON syntax, type mismatches), prints a clean one-line error message (e.g., `No terminal defined for 'f' at line 21 col 1`), and proceeds with defaults. The program continues so the user can still test with the default settings if needed.
+**Missing/invalid config file** — `PlotSettings.initFromJson` catches a missing file (`FileNotFoundError`) and parse errors (JSON syntax, type mismatches) separately, prints a clean one-line error message (e.g., `No terminal defined for 'f' at line 21 col 1`), and proceeds with defaults either way. The program continues so the user can still test with the default settings if needed.
 
-**Invalid SVG file** — `parseSvg` wraps `svgelements` and re-raises any parse error as `SvgParseError`. `_Process.py`'s `run()` catches it around just the `parseSvg` call, prints it, and returns `False` instead of raising; the main loop re-prompts for a new file on `False` and retries. No `settings.json` reload needed.
+**Invalid SVG file** — `parseSvg` wraps `svgelements` and re-raises any parse error as `SvgParseError`. `_Process.py`'s `run()` catches it around just the `parseSvg` call, prints it, and returns `False` instead of raising; the main loop re-prompts for a new file on `False` and retries. No config reload needed.
 
 **Output file safety** — `Plotter.createFile` writes to a temp file in the output directory and only `os.replace()`s it over the real target on full success. If anything fails mid-pipeline (missing settings keys, missing prefix/suffix gcode files, etc.), the output file is left untouched — can't be truncated by a partial crash.
 
-## Settings (`settings.json`)
+## Settings (`config/bambu_p1s_config.json`)
 
-Loaded via `commentjson` (supports `//` comments). `machine` (startPos/penOffset/plateSize/drawableArea), `gcode` (per-state heights/speeds/accels, tessellationTolerance, infillSpacing), `visualization` (pen width, cosmetic layering/coloring for Bambu Studio preview), `debug` (showBoundingBoxes, profiling). All fields are type-checked before use; on mismatch, the setting is skipped and a warning is printed.
+One config file per printer, named `config/<printer>_config.json` (currently just `bambu_p1s_config.json`). Loaded via `commentjson` (supports `//` comments). `machine` (startPos/penOffset/plateSize/drawableArea), `gcode` (per-state heights/speeds/accels, tessellationTolerance, infillSpacing, prefix/suffix gcode template paths), `visualization` (pen width, cosmetic layering/coloring for Bambu Studio preview), `debug` (showBoundingBoxes, profiling). All fields are type-checked before use; on mismatch, the setting is skipped and a warning is printed.
 
 Positions (`endPos`, `penOffset`, `plateSize`, `drawableArea`) are stored as `complex`, matching how positions are represented everywhere else in the codebase — JSON's 2-element lists are converted via `complex(x, y)` in `initFromJson`. `startPos` is the one exception, kept as a `dict[str, float]` (`{"X":.., "Y":.., "Z":..}`) since it needs a Z component and `Plotter.pos` (current nozzle position) is built directly from it.
 
 ## Profiling
 
-Set `debug.profiling: true` in `settings.json` to run under `cProfile` and print the 30 slowest functions by cumulative time.
+Set `debug.profiling: true` in the config file to run under `cProfile` and print the 30 slowest functions by cumulative time.
 
 ## Hardware
 
@@ -70,7 +70,7 @@ Set `debug.profiling: true` in `settings.json` to run under `cProfile` and print
 - `lib/svgparse.py` — SVG parsing (raises SvgParseError on invalid input)
 - `lib/route.py` — path ordering (TSP-like routing)
 - `lib/infill.py` — concentric infill generation
-- `settings.json` — machine/gcode/viz/debug config
+- `config/bambu_p1s_config.json` — machine/gcode/viz/debug config for the Bambu P1S; other printers get their own `config/<printer>_config.json`
 - `typings/pyclipper/__init__.pyi` — type stubs for pyclipper
-- `Append/{startCode,endCode}.gcode` — gcode templates
+- `gcode_templates/bambu_p1s_{prefix,suffix}.gcode` — gcode templates referenced by the config's `prefixFile`/`suffixFile`; named per-printer like the config files
 - `*.svg` — test drawings (`horse.svg` multi-subpath; `testDrawing.svg` tests fill rules)

@@ -1,6 +1,4 @@
-import os
-import cProfile
-import pstats
+import os, cProfile, pstats
 from lib.plot import Plotter
 from lib.svgparse import parseSvg, SvgParseError
 from lib.infill import generateInfill
@@ -26,7 +24,7 @@ def promptOutputFile() -> str:
 fileIn = promptInputFile()
 fileOut = promptOutputFile()
 
-plotter = Plotter("settings.json")
+plotter = Plotter("config/bambu_p1s_config.json")
 
 def run() -> bool:
     try:
