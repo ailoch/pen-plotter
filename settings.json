@@ -11,7 +11,7 @@
     // controls the output gcode
     "gcode": {
         "heights": {"draw": 2, "travel": 3.5, "_segmentBounds": 2.1, "_pathBounds": 2.2, "_documentBounds": 2.3}, // mm
-        "speeds": {"draw": 1800, "travel": 15000}, // mm/min
+        "speeds": {"draw": 30, "travel": 250}, // mm/s
         "accels": {"draw": 3000, "travel": 15000}, // mm/s^2
         "shortTravelThreshold": 0.5, // travel moves below this distance will not lift the pen
         "tessellationTolerance": 0.012, // max allowed deviation (mm) of gcode from the true curve

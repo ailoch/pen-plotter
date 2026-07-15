@@ -98,7 +98,8 @@ class PlotSettings:
                         temp = {}
                         for k, v in setting.items():
                             if k in _STATE_KEYS:
-                                temp[_STATE_KEYS[k]] = v
+                                # speeds needs to be converted mm/min -> mm/s
+                                temp[_STATE_KEYS[k]] = v*60 if settingName == "speeds" else v
                             else:
                                 print(f"Unknown move type '{k}' (reading {sectionName}.{settingName})")
                         setattr(self, settingName, temp)
