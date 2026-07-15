@@ -26,10 +26,10 @@ _STATE_KEYS = {
 class PlotSettings:
     # machine settings
     startPos: dict[str, float] = field(default_factory=lambda: {"X": 0, "Y": 0, "Z": 10})
-    endPos: tuple[float, float] = field(default_factory=lambda: (0, 0))
-    penOffset: tuple[float, float] = (0, 0)
-    plateSize: tuple[float, float] = (150, 150)
-    drawableArea: tuple[float, float] = (150, 150)
+    endPos: complex = 0
+    penOffset: complex = 0
+    plateSize: complex = 150+150j
+    drawableArea: complex = 150+150j
 
     # gcode settings
     heights: dict[State, float] = field(default_factory=lambda: {State.DRAW: 0, State.TRAVEL: 10})
@@ -107,7 +107,7 @@ class PlotSettings:
                         if not isinstance(setting, list) or len(setting) != 2:
                             print(f"Wrong type for setting {sectionName}.{settingName}: expected a 2-element list")
                             continue
-                        setattr(self, settingName, tuple(setting))
+                        setattr(self, settingName, complex(setting[0], setting[1]))
                     case "startPos":
                         if not isinstance(setting, list) or len(setting) != 3:
                             print(f"Wrong type for setting {sectionName}.startPos: expected a 3-element list")
@@ -273,16 +273,16 @@ class Plotter:
                     "TRAVEL_ACCEL": self.settings.accels[State.TRAVEL],
                     "LINE_WIDTH": self.settings.penWidth,
                     "LOAD_DELAY": self.settings.loadDelay,
-                    "END_X": self.settings.endPos[0],
-                    "END_Y": self.settings.endPos[1]
+                    "END_X": self.settings.endPos.real,
+                    "END_Y": self.settings.endPos.imag
                 }
-                plateMaxX = self.settings.plateSize[0]
-                plateMaxY = self.settings.plateSize[1]
-                canvasMaxX = self.settings.drawableArea[0]
-                canvasMaxY = self.settings.drawableArea[1]
+                plateMaxX = self.settings.plateSize.real
+                plateMaxY = self.settings.plateSize.imag
+                canvasMaxX = self.settings.drawableArea.real
+                canvasMaxY = self.settings.drawableArea.imag
                 if self.settings.showPenPos:
                     replace["BED_EXCLUDE_AREA"] = f"0x0,{plateMaxX}x0,{plateMaxX}x{plateMaxY},{canvasMaxX}x{plateMaxY},{canvasMaxX}x{plateMaxY-canvasMaxY},0x{plateMaxY-canvasMaxY}"
-                    replace["EXTRUDER_OFFSET"] = f"{self.settings.penOffset[0]}x{self.settings.penOffset[1]}"
+                    replace["EXTRUDER_OFFSET"] = f"{self.settings.penOffset.real}x{self.settings.penOffset.imag}"
                 else:
                     replace["BED_EXCLUDE_AREA"] = f"0x0,{plateMaxX}x0,{plateMaxX}x{plateMaxY-canvasMaxY},{plateMaxX-canvasMaxX}x{plateMaxY-canvasMaxY},{plateMaxX-canvasMaxX}x{plateMaxY},0x{plateMaxY}"
                     replace["EXTRUDER_OFFSET"] = "0x2" # 0x2 is the default offset

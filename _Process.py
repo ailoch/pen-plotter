@@ -30,7 +30,7 @@ plotter = Plotter("settings.json")
 
 def run() -> bool:
     try:
-        document = parseSvg(fileIn, complex(plotter.settings.drawableArea[0], plotter.settings.drawableArea[1]), complex(plotter.settings.penOffset[0], plotter.settings.penOffset[1]))
+        document = parseSvg(fileIn, plotter.settings.drawableArea, plotter.settings.penOffset)
     except SvgParseError as e:
         print(e)
         return False
@@ -38,7 +38,7 @@ def run() -> bool:
     generateInfill(document, plotter.settings.infillSpacing, plotter.settings.tessellationTolerance, plotter.settings.maxTessellationDepth)
 
     if plotter.settings.optimizePathOrder:
-        orderPaths(document, complex(plotter.pos["X"], plotter.pos["Y"]), complex(plotter.settings.endPos[0], plotter.settings.endPos[1]))
+        orderPaths(document, complex(plotter.pos["X"], plotter.pos["Y"]), plotter.settings.endPos)
 
     plotter.createFile(document, fileOut)
     return True

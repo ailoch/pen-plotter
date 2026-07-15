@@ -48,6 +48,8 @@ Bidirectional greedy fitter: reduces any curve to Line/Arc within tolerance, wor
 
 Loaded via `commentjson` (supports `//` comments). `machine` (startPos/penOffset/plateSize/drawableArea), `gcode` (per-state heights/speeds/accels, tessellationTolerance, infillSpacing), `visualization` (pen width, cosmetic layering/coloring for Bambu Studio preview), `debug` (showBoundingBoxes, profiling). All fields are type-checked before use; on mismatch, the setting is skipped and a warning is printed.
 
+Positions (`endPos`, `penOffset`, `plateSize`, `drawableArea`) are stored as `complex`, matching how positions are represented everywhere else in the codebase — JSON's 2-element lists are converted via `complex(x, y)` in `initFromJson`. `startPos` is the one exception, kept as a `dict[str, float]` (`{"X":.., "Y":.., "Z":..}`) since it needs a Z component and `Plotter.pos` (current nozzle position) is built directly from it.
+
 ## Profiling
 
 Set `debug.profiling: true` in `settings.json` to run under `cProfile` and print the 30 slowest functions by cumulative time.
