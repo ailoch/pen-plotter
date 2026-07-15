@@ -58,24 +58,29 @@ class PlotSettings:
     profiling: bool = False # if true, profiles _Process.py's pipeline and prints the slowest functions
 
     def initFromJson(self, path):
-        with open(path) as f:
-            text = f.read()
-            try:
-                data = commentjson.loads(text)
-            except Exception as e:
-                # remove a traceback from the error message
-                # this makes the error much more readable
-                cause = e.__context__ or e
+        try:
+            with open(path) as f:
+                text = f.read()
+        except FileNotFoundError:
+            print(f"Settings file '{path}' does not exist. Using default settings.")
+            return
 
-                # a ValueError is thrown when the input can't be tokenized
-                # the error contains the entire source text, so we need to figure out the exact cause of the error
-                if isinstance(cause, ValueError) and cause.args[:1] == ("Unable to parse text",):
-                    try:
-                        commentjson.commentjson.parser.parse(text)
-                    except Exception as parseError:
-                        cause = parseError
-                print(f"Failed to parse settings file '{path}': {str(cause).splitlines()[0]}. Using default settings.")
-                return
+        try:
+            data = commentjson.loads(text)
+        except Exception as e:
+            # remove a traceback from the error message
+            # this makes the error much more readable
+            cause = e.__context__ or e
+
+            # a ValueError is thrown when the input can't be tokenized
+            # the error contains the entire source text, so we need to figure out the exact cause of the error
+            if isinstance(cause, ValueError) and cause.args[:1] == ("Unable to parse text",):
+                try:
+                    commentjson.commentjson.parser.parse(text)
+                except Exception as parseError:
+                    cause = parseError
+            print(f"Failed to parse settings file '{path}': {str(cause).splitlines()[0]}. Using default settings.")
+            return
 
         allowed = {f.name for f in fields(self)}
         # some settings are stored with different types than in the json
