@@ -1,5 +1,7 @@
 *.gcode
 *.svg
+*.tmp
 !testDrawing.svg
+!invalid.svg
 !Append/*.gcode
 __pycache__/

@@ -36,9 +36,17 @@ Bidirectional greedy fitter: reduces any curve to Line/Arc within tolerance, wor
 - **`fitLines=True`** (used by infill arc-recovery): re-fits raw polygon points → arcs, with optimized fast path for all-`Line` ranges (no per-segment interior sampling).
 - **Numerically unstable circumcircles rejected** via `MAX_RADIUS_TO_CHORD` guard — filters near-collinear noise.
 
+## Error Handling
+
+**Invalid settings file** — `PlotSettings.initFromJson` catches parse errors (JSON syntax, type mismatches), prints a clean one-line error message (e.g., `No terminal defined for 'f' at line 21 col 1`), and proceeds with defaults. The program continues so the user can still test with the default settings if needed.
+
+**Invalid SVG file** — `parseSvg` wraps `svgelements` and re-raises any parse error as `SvgParseError`. `_Process.py`'s `run()` catches it around just the `parseSvg` call, prints it, and returns `False` instead of raising; the main loop re-prompts for a new file on `False` and retries. No `settings.json` reload needed.
+
+**Output file safety** — `Plotter.createFile` writes to a temp file in the output directory and only `os.replace()`s it over the real target on full success. If anything fails mid-pipeline (missing settings keys, missing prefix/suffix gcode files, etc.), the output file is left untouched — can't be truncated by a partial crash.
+
 ## Settings (`settings.json`)
 
-Loaded via `commentjson` (supports `//` comments). `machine` (startPos/penOffset/plateSize/drawableArea), `gcode` (per-state heights/speeds/accels, tessellationTolerance, infillSpacing), `visualization` (pen width, cosmetic layering/coloring for Bambu Studio preview), `debug` (showBoundingBoxes, profiling).
+Loaded via `commentjson` (supports `//` comments). `machine` (startPos/penOffset/plateSize/drawableArea), `gcode` (per-state heights/speeds/accels, tessellationTolerance, infillSpacing), `visualization` (pen width, cosmetic layering/coloring for Bambu Studio preview), `debug` (showBoundingBoxes, profiling). All fields are type-checked before use; on mismatch, the setting is skipped and a warning is printed.
 
 ## Profiling
 
@@ -54,10 +62,10 @@ Set `debug.profiling: true` in `settings.json` to run under `cProfile` and print
 
 ## Files
 
-- `_Process.py` — entry point, calls other files
+- `_Process.py` — entry point & main loop (input prompts, retry logic, profiling wrapper)
 - `lib/geometry.py` — core geometry (Transform, Segment subclasses, Path, PathObject, Document, tessellation)
-- `lib/plot.py` — gcode generation (State, PlotSettings, Plotter)
-- `lib/svgparse.py` — SVG parsing
+- `lib/plot.py` — gcode generation (State, PlotSettings, Plotter, settings loader with error handling)
+- `lib/svgparse.py` — SVG parsing (raises SvgParseError on invalid input)
 - `lib/route.py` — path ordering (TSP-like routing)
 - `lib/infill.py` — concentric infill generation
 - `settings.json` — machine/gcode/viz/debug config

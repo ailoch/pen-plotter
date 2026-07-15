@@ -1,4 +1,4 @@
-import math
+import math, os, tempfile
 from enum import Enum, auto
 from typing import TextIO
 from dataclasses import dataclass, field, fields
@@ -13,6 +13,15 @@ class State(Enum):
     _PATH_BOUNDS = auto()
     _DOCUMENT_BOUNDS = auto()
 
+# maps settings.json's move-type keys (heights/speeds/accels/lineTypes) to their State
+_STATE_KEYS = {
+    "draw": State.DRAW,
+    "travel": State.TRAVEL,
+    "_segmentBounds": State._SEGMENT_BOUNDS,
+    "_pathBounds": State._PATH_BOUNDS,
+    "_documentBounds": State._DOCUMENT_BOUNDS,
+}
+
 @dataclass
 class PlotSettings:
     # machine settings
@@ -23,9 +32,9 @@ class PlotSettings:
     drawableArea: tuple[float, float] = (150, 150)
 
     # gcode settings
-    heights: dict[State, float] = field(default_factory=dict)
-    speeds: dict[State, float] = field(default_factory=dict)
-    accels: dict[State, float] = field(default_factory=dict)
+    heights: dict[State, float] = field(default_factory=lambda: {State.DRAW: 0, State.TRAVEL: 10})
+    speeds: dict[State, float] = field(default_factory=lambda: {State.TRAVEL: 3000})
+    accels: dict[State, float] = field(default_factory=lambda: {State.TRAVEL: 1000})
     shortTravelThreshold: float = .5
     tessellationTolerance: float = .012
     maxTessellationDepth: int = 10
@@ -50,45 +59,67 @@ class PlotSettings:
 
     def initFromJson(self, path):
         with open(path) as f:
-            data = commentjson.load(f)
+            text = f.read()
+            try:
+                data = commentjson.loads(text)
+            except Exception as e:
+                # remove a traceback from the error message
+                # this makes the error much more readable
+                cause = e.__context__ or e
+
+                # a ValueError is thrown when the input can't be tokenized
+                # the error contains the entire source text, so we need to figure out the exact cause of the error
+                if isinstance(cause, ValueError) and cause.args[:1] == ("Unable to parse text",):
+                    try:
+                        commentjson.commentjson.parser.parse(text)
+                    except Exception as parseError:
+                        cause = parseError
+                print(f"Failed to parse settings file '{path}': {str(cause).splitlines()[0]}. Using default settings.")
+                return
+
         allowed = {f.name for f in fields(self)}
+        # some settings are stored with different types than in the json
+        specialTypeSettings = {"startPos", "penOffset", "plateSize", "drawableArea", "endPos"}
 
         for sectionName, data in data.items():
             for settingName, setting in data.items():
-                #TODO: check types of incoming objects
-                if settingName in allowed:
-                    match settingName: # some properties need special logic
-                        case "heights" | "speeds" | "accels" | "lineTypes":
-                            temp = {}
-                            for k, v in setting.items():
-                                match k:
-                                    case "draw":
-                                        temp[State.DRAW] = v
-                                    case "travel":
-                                        temp[State.TRAVEL] = v
-                                    case "_segmentBounds":
-                                        temp[State._SEGMENT_BOUNDS] = v
-                                    case "_pathBounds":
-                                        temp[State._PATH_BOUNDS] = v
-                                    case "_documentBounds":
-                                        temp[State._DOCUMENT_BOUNDS] = v
-                                    case _:
-                                        print(f"Unknown move type '{k}' (reading {sectionName}.{settingName})")
-                            setattr(self, settingName, temp)
-                        case "penOffset" | "plateSize" | "drawableArea":
-                            setattr(self, settingName, tuple(setting))
-                        case "startPos":
-                            self.startPos = dict(zip(("X", "Y", "Z"), setting))
-                        case "style":
-                            allowedStyles = ("line type", "instruction", "segment")
-                            if setting.lower() in allowedStyles:
-                                self.style = setting.lower()
-                            else:
-                                print(f"Unknown style '{setting}' (reading {sectionName}.style)")
-                        case _:
-                            setattr(self, settingName, setting)
-                else:
+                if settingName not in allowed:
                     print(f"Unknown setting {sectionName}.{settingName}")
+                    continue
+
+                if settingName not in specialTypeSettings:
+                    expectedType = type(getattr(self, settingName))
+                    if type(setting) != expectedType:
+                        print(f"Wrong type for setting {sectionName}.{settingName}: expected {expectedType.__name__}, got {type(setting).__name__}")
+                        continue
+
+                match settingName: # some properties need special logic
+                    case "heights" | "speeds" | "accels" | "lineTypes":
+                        temp = {}
+                        for k, v in setting.items():
+                            if k in _STATE_KEYS:
+                                temp[_STATE_KEYS[k]] = v
+                            else:
+                                print(f"Unknown move type '{k}' (reading {sectionName}.{settingName})")
+                        setattr(self, settingName, temp)
+                    case "penOffset" | "plateSize" | "drawableArea" | "endPos":
+                        if not isinstance(setting, list) or len(setting) != 2:
+                            print(f"Wrong type for setting {sectionName}.{settingName}: expected a 2-element list")
+                            continue
+                        setattr(self, settingName, tuple(setting))
+                    case "startPos":
+                        if not isinstance(setting, list) or len(setting) != 3:
+                            print(f"Wrong type for setting {sectionName}.startPos: expected a 3-element list")
+                            continue
+                        self.startPos = dict(zip(("X", "Y", "Z"), setting))
+                    case "style":
+                        allowedStyles = ("line type", "instruction", "segment")
+                        if setting.lower() in allowedStyles:
+                            self.style = setting.lower()
+                        else:
+                            print(f"Unknown style '{setting}' (reading {sectionName}.style)")
+                    case _:
+                        setattr(self, settingName, setting)
 
         print(f"Loaded settings from file '{path}'")
 
@@ -228,8 +259,13 @@ class Plotter:
             self._moveRect(object.bounds(), file, State._PATH_BOUNDS)
 
     def createFile(self, geom: Document, fileOut: str):
+        # write to a temp file in the same directory and only swap it in on success,
+        # so a failure partway through won't truncate/corrupt a pre-existing fileOut
+        tempPath = None
         try:
-            with open(fileOut, "w") as destFile:
+            outDir = os.path.dirname(os.path.abspath(fileOut)) or "."
+            fd, tempPath = tempfile.mkstemp(dir=outDir, suffix=".tmp")
+            with os.fdopen(fd, "w") as destFile:
                 replace: dict[str, float | str] = {
                     "TRAVEL_HEIGHT": self.settings.heights[State.TRAVEL],
                     "TRAVEL_SPEED": self.settings.speeds[State.TRAVEL],
@@ -262,8 +298,13 @@ class Plotter:
 
                 with open(self.settings.suffixFile, "r") as srcFile:
                     self.fileAppend(srcFile, destFile, replace)
+            os.replace(tempPath, fileOut)
+            tempPath = None
             print("Post process completed successfully")
         except PermissionError as e:
             print(f'Could not open file "{e.filename}". Another program might be editing it.')
         except FileNotFoundError as e:
             print(f'Could not find file "{e.filename}".')
+        finally:
+            if tempPath and os.path.exists(tempPath):
+                os.remove(tempPath)

@@ -2,7 +2,7 @@ import os
 import cProfile
 import pstats
 from lib.plot import Plotter
-from lib.svgparse import parseSvg
+from lib.svgparse import parseSvg, SvgParseError
 from lib.infill import generateInfill
 from lib.route import orderPaths
 
@@ -28,20 +28,33 @@ fileOut = promptOutputFile()
 
 plotter = Plotter("settings.json")
 
-def run():
-    document = parseSvg(fileIn, complex(plotter.settings.drawableArea[0], plotter.settings.drawableArea[1]), complex(plotter.settings.penOffset[0], plotter.settings.penOffset[1]))
+def run() -> bool:
+    try:
+        document = parseSvg(fileIn, complex(plotter.settings.drawableArea[0], plotter.settings.drawableArea[1]), complex(plotter.settings.penOffset[0], plotter.settings.penOffset[1]))
+    except SvgParseError as e:
+        print(e)
+        return False
+
     generateInfill(document, plotter.settings.infillSpacing, plotter.settings.tessellationTolerance, plotter.settings.maxTessellationDepth)
+
     if plotter.settings.optimizePathOrder:
         orderPaths(document, complex(plotter.pos["X"], plotter.pos["Y"]), complex(plotter.settings.endPos[0], plotter.settings.endPos[1]))
-    plotter.createFile(document, fileOut)
 
-if plotter.settings.profiling:
+    plotter.createFile(document, fileOut)
+    return True
+
+def runProfiled() -> bool:
     profiler = cProfile.Profile()
     profiler.enable()
-    run()
+    success = run()
     profiler.disable()
-    pstats.Stats(profiler).sort_stats("cumulative").print_stats(30)
-else:
-    run()
+    if success: # only print stats on successful run
+        pstats.Stats(profiler).sort_stats("cumulative").print_stats(30)
+    return success
+
+runPipeline = runProfiled if plotter.settings.profiling else run
+
+while not runPipeline():
+    fileIn = promptInputFile()
 
 input() # wait for user to press enter before closing window

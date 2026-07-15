@@ -4,6 +4,9 @@ import svgelements
 
 from lib.geometry import Style, Transform, Segment, Line, Arc, QuadraticBezier, CubicBezier, Path, PathObject, Document
 
+class SvgParseError(Exception):
+    pass
+
 def readStyle(element: svgelements.SVGElement) -> Style:
     # svgelements resolves inherited/cascaded presentation attributes (fill, fill-rule)
     # into this raw values dict, so this works the same whether the attribute is set
@@ -126,10 +129,12 @@ def parseSvgElement(node: svgelements.SVGElement, docTransform: Transform, docum
 
 def parseSvg(svgPath: str, dimensions: complex, offset: complex) -> Document:
     document = Document()
-    svg = svgelements.SVG.parse(svgPath)
+    try:
+        svg = svgelements.SVG.parse(svgPath)
+    except Exception as e:
+        raise SvgParseError(f"Failed to parse SVG file '{svgPath}' ({e})") from e
     transform = Transform()
     #TODO: add warning when document height and width don't match
-    # FIXME: scaling logic can be weird sometimes
     transform.scale(svg.viewbox.height / svg.height) # undo svgelements trying to scale document to viewport
 
     # this line can cause unexpected behavior sometimes
