@@ -1,4 +1,5 @@
 import math, os, tempfile
+from typing import Any, cast
 from enum import Enum, auto
 from typing import TextIO
 from dataclasses import dataclass, field, fields
@@ -94,9 +95,12 @@ class PlotSettings:
 
                 if settingName not in specialTypeSettings:
                     expectedType = type(getattr(self, settingName))
+                    if expectedType == float and type(setting) == int:
+                        setting = float(setting)
                     if type(setting) != expectedType:
                         print(f"Wrong type for setting {sectionName}.{settingName}: expected {expectedType.__name__}, got {type(setting).__name__}")
                         continue
+                setting = cast(Any, setting)
 
                 match settingName: # some properties need special logic
                     case "heights" | "speeds" | "accels" | "lineTypes":
