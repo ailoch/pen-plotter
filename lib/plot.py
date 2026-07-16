@@ -41,8 +41,8 @@ class PlotSettings:
     infillSpacing: float = .3 # distance between concentric infill loops (mm); <= 0 disables infill
     loadDelay: float = 20
 
-    prefixFile: str = ""
-    suffixFile: str = ""
+    prefixFile: str = "gcode_templates/default_prefix.gcode"
+    suffixFile: str = "gcode_templates/default_suffix.gcode"
 
     # visualization settings
     penWidth: float = .5
