@@ -679,17 +679,6 @@ class Path:
         end = tStart - lo if backward else tStart + lo
         return end, found
 
-    # trims an already-fitted segment (known to cover [tb,t1]) so it starts at
-    # newT instead - reuses its own validated geometry rather than recomputing
-    # a fresh fit, since fitting isn't monotonic under range-narrowing: a fresh
-    # 3-point circumcircle through different points isn't guaranteed to still
-    # satisfy tolerance just because its range is a subset of one that did.
-    def _trimSegmentStart(self, seg: "Segment", tb: float, t1: float, newT: float) -> "Segment":
-        frac = 0.0 if t1 == tb else (newT - tb) / (t1 - tb)
-        if isinstance(seg, Arc):
-            return Arc(center=seg.center, u=seg.u, v=seg.v, t0=seg.t0 + frac * seg.sweep, sweep=seg.sweep * (1 - frac))
-        return Line(self.point(newT), seg.point(1))
-
     # fits [t0,t1] to a sequence of Lines/circular Arcs within tolerance (mm):
     # greedily consumes the most range a single Line/Arc can cover from each
     # side, then recurses on whatever's left in the middle, rather than
@@ -704,7 +693,18 @@ class Path:
         tb, back = self._greedyExtent(t1, t0, tolerance, allowArcs, backward=True)
 
         if tf >= tb:
-            return [front, self._trimSegmentStart(back, tb, t1, tf)]
+            # front and back overlap in [tf,tb] - re-fit [tf,t1] directly rather
+            # than algebraically trimming back's [tb,t1] fit: a trimmed Arc's
+            # start would come from interpolating back's own parametrization
+            # (constant angular speed), which only matches the true curve at
+            # back's original 3 defining points - anywhere else, including
+            # exactly at tf, it's off by up to tolerance, leaving a visible
+            # gap/overlap against front's endpoint. A fresh fit's p0 is always
+            # exactly self.point(tf), so it always joins front with no gap.
+            trimmed = self._tryFitRange(tf, t1, tolerance, allowArcs)
+            if trimmed is not None:
+                return [front, trimmed]
+            return [front] + self._fitRange(tf, t1, tolerance, allowArcs)
 
         return [front] + self._fitRange(tf, tb, tolerance, allowArcs) + [back]
 
