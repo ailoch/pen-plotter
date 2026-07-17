@@ -8,15 +8,19 @@
         "drawableArea": [217, 243] // area of the paper the pen can safely move to
     },
 
-    // controls the output gcode
-    "gcode": {
+    // controls how the pen moves while drawing
+    "motion": {
         "heights": {"draw": 2, "travel": 3.5, "_segmentBounds": 2.1, "_pathBounds": 2.2, "_documentBounds": 2.3}, // mm
         "speeds": {"draw": 30, "travel": 250}, // mm/s
         "accels": {"draw": 3000, "travel": 15000}, // mm/s^2
         "shortTravelThreshold": 0.5, // travel moves below this distance will not lift the pen
+        "loadDelay": 3 // wait this long for user to load pen
+    },
+
+    // controls what is drawn on paper
+    "processing": {
         "tessellationTolerance": 0.012, // max allowed deviation (mm) of gcode from the true curve
         "infillSpacing": 0.3, // distance (mm) between concentric infill loops; 0 disables infill
-        "loadDelay": 3, // wait this long for user to load pen
 
         "prefixFile": "gcode_templates/bambu_p1s_prefix.gcode",
         "suffixFile": "gcode_templates/bambu_p1s_suffix.gcode"

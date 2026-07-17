@@ -32,14 +32,16 @@ class PlotSettings:
     plateSize: complex = 150+150j
     drawableArea: complex = 150+150j
 
-    # gcode settings
+    # motion settings
     heights: dict[State, float] = field(default_factory=lambda: {State.DRAW: 0, State.TRAVEL: 10})
     speeds: dict[State, float] = field(default_factory=lambda: {State.TRAVEL: 3000})
     accels: dict[State, float] = field(default_factory=lambda: {State.TRAVEL: 1000})
     shortTravelThreshold: float = .5
+    loadDelay: float = 20
+
+    # processing settings
     tessellationTolerance: float = .012
     infillSpacing: float = .3 # distance between concentric infill loops (mm); <= 0 disables infill
-    loadDelay: float = 20
 
     prefixFile: str = "gcode_templates/default_prefix.gcode"
     suffixFile: str = "gcode_templates/default_suffix.gcode"
