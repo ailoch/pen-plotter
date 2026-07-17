@@ -38,7 +38,6 @@ class PlotSettings:
     accels: dict[State, float] = field(default_factory=lambda: {State.TRAVEL: 1000})
     shortTravelThreshold: float = .5
     tessellationTolerance: float = .012
-    maxTessellationDepth: int = 10
     infillSpacing: float = .3 # distance between concentric infill loops (mm); <= 0 disables infill
     loadDelay: float = 20
 
@@ -247,7 +246,7 @@ class Plotter:
 
     def addPath(self, object: PathObject, file: TextIO, raised: bool = False):
         for path in object.geometry:
-            tessellated = path.tessellate(self.settings.tessellationTolerance, self.settings.maxTessellationDepth)
+            tessellated = path.tessellate(self.settings.tessellationTolerance)
             for segment in tessellated.segments:
                 if isinstance(segment, Line):
                     self.penMove(segment.start, file, True, raised=raised)

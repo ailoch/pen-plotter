@@ -18,7 +18,7 @@ def _fromClipperPath(path) -> list[complex]:
 # subpaths are left untouched, and drawn first - see Plotter.addPath). runs in
 # printer space (mm), so must be called after parseSvg's transforms are applied.
 # spacing <= 0 disables infill entirely
-def generateInfill(document: Document, spacing: float, tolerance: float, maxDepth: int):
+def generateInfill(document: Document, spacing: float, tolerance: float):
     if spacing <= 0:
         return
     if pyclipper is None:
@@ -37,7 +37,7 @@ def generateInfill(document: Document, spacing: float, tolerance: float, maxDept
         # only (all pyclipper understands) - Path.vertices() then gives the
         # polygon points directly, correctly including the true final point for
         # open paths (relying on SVG's implicit fill closure back to the start)
-        clipperPaths = [_toClipperPath(p.tessellate(tolerance, maxDepth, allowArcs=False).vertices()) for p in fillableSubpaths]
+        clipperPaths = [_toClipperPath(p.tessellate(tolerance, allowArcs=False).vertices()) for p in fillableSubpaths]
         clipperPaths = [p for p in clipperPaths if len(p) >= 3]
         if not clipperPaths:
             continue
@@ -86,4 +86,4 @@ def generateInfill(document: Document, spacing: float, tolerance: float, maxDept
             if len(realPts) < 3:
                 continue
             loop = Path.fromPoints(realPts, closed=True)
-            obj.geometry.append(loop.tessellate(tolerance, maxDepth, fitLines=True))
+            obj.geometry.append(loop.tessellate(tolerance, fitLines=True))

@@ -34,7 +34,7 @@ def run() -> bool:
         print(e)
         return False
 
-    generateInfill(document, plotter.settings.infillSpacing, plotter.settings.tessellationTolerance, plotter.settings.maxTessellationDepth)
+    generateInfill(document, plotter.settings.infillSpacing, plotter.settings.tessellationTolerance)
 
     if plotter.settings.optimizePathOrder:
         orderPaths(document, complex(plotter.pos["X"], plotter.pos["Y"]), plotter.settings.endPos)

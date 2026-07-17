@@ -731,7 +731,7 @@ class Path:
     # to instead treat every Line as raw data to be re-fit too (e.g. a dense
     # polyline of individually-meaningless points, like a pyclipper offset
     # result) - see Path.fromPoints.
-    def tessellate(self, tolerance: float, maxDepth: int, allowArcs: bool = True, fitLines: bool = False) -> "Path":
+    def tessellate(self, tolerance: float, allowArcs: bool = True, fitLines: bool = False) -> "Path":
         n = len(self.segments)
         if n == 0:
             return Path([])
