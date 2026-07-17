@@ -298,6 +298,7 @@ class Plotter:
 
                 with open(self.settings.prefixFile, "r") as srcFile:
                     self.fileAppend(srcFile, destFile, replace)
+                destFile.write("\n")
 
                 objectCount = 0
                 for object in geom.objects:
@@ -306,6 +307,7 @@ class Plotter:
                 if self.settings.showBoundingBoxes:
                     self._moveRect(geom.bounds(), destFile, State._DOCUMENT_BOUNDS)
 
+                destFile.write("\n")
                 with open(self.settings.suffixFile, "r") as srcFile:
                     self.fileAppend(srcFile, destFile, replace)
             os.replace(tempPath, fileOut)
