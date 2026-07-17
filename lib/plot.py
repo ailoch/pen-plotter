@@ -268,7 +268,7 @@ class Plotter:
                     self._moveRect(segment.bounds(), file, State._SEGMENT_BOUNDS)
             self._moveRect(object.bounds(), file, State._PATH_BOUNDS)
 
-    def createFile(self, geom: Document, fileOut: str):
+    def createFile(self, geom: Document, fileOut: str) -> bool:
         # write to a temp file in the same directory and only swap it in on success,
         # so a failure partway through won't truncate/corrupt a pre-existing fileOut
         tempPath = None
@@ -312,7 +312,7 @@ class Plotter:
                     self.fileAppend(srcFile, destFile, replace)
             os.replace(tempPath, fileOut)
             tempPath = None
-            print("Post process completed successfully")
+            return True
         except PermissionError as e:
             print(f'Could not open file "{e.filename}". Another program might be editing it.')
         except FileNotFoundError as e:
@@ -320,3 +320,4 @@ class Plotter:
         finally:
             if tempPath and os.path.exists(tempPath):
                 os.remove(tempPath)
+        return False

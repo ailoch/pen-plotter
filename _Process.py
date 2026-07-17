@@ -1,4 +1,4 @@
-import os, cProfile, pstats
+import os, time, cProfile, pstats
 from lib.plot import Plotter
 from lib.svgparse import parseSvg, SvgParseError
 from lib.infill import generateInfill
@@ -27,6 +27,7 @@ fileOut = promptOutputFile()
 plotter = Plotter("config/bambu_p1s_config.json")
 
 def run() -> bool:
+    startTime = time.perf_counter()
     try:
         document = parseSvg(fileIn, plotter.settings.drawableArea, plotter.settings.penOffset)
     except SvgParseError as e:
@@ -38,8 +39,12 @@ def run() -> bool:
     if plotter.settings.optimizePathOrder:
         orderPaths(document, complex(plotter.pos["X"], plotter.pos["Y"]), plotter.settings.endPos)
 
-    plotter.createFile(document, fileOut)
-    return True
+    success = plotter.createFile(document, fileOut)
+
+    if success:
+        print(f"\nGcode created successfully in {time.perf_counter() - startTime:.3f}s")
+        print("Press enter to close")
+    return success
 
 def runProfiled() -> bool:
     profiler = cProfile.Profile()
