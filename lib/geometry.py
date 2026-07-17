@@ -591,8 +591,19 @@ class Path:
 
         # --- try a circular Arc via 3-point circumcircle ---
         if allowArcs:
-            pm = self.point((t0 + t1) / 2)
-            arc = Arc.fromThreePoints(p0, pm, p1, maxRadiusToChord=self._MAX_RADIUS_TO_CHORD)
+            if t0 == 0.0 and t1 == 1.0 and self.isClosed():
+                # average every vertex because 3 evenly spread out points is too noisy
+                direction = Arc.fromThreePoints(p0, self.point(1/3), self.point(2/3), maxRadiusToChord=self._MAX_RADIUS_TO_CHORD)
+                arc = None
+                if direction is not None:
+                    vertices = [self.point(i / n) for i in range(n)]
+                    center = sum(vertices) / n
+                    radius = sum(abs(v - center) for v in vertices) / n
+                    arcT0 = math.atan2(-(p0 - center).imag, (p0 - center).real)
+                    arc = Arc(center=center, u=complex(radius, 0), v=complex(0, -radius), t0=arcT0, sweep=math.copysign(math.tau, direction.sweep))
+            else:
+                pm = self.point((t0 + t1) / 2)
+                arc = Arc.fromThreePoints(p0, pm, p1, maxRadiusToChord=self._MAX_RADIUS_TO_CHORD)
             if arc is not None:
                 center, r = arc.center, abs(arc.u)
                 fits = True
