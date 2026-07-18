@@ -42,15 +42,15 @@ Bidirectional greedy fitter: reduces any curve to Line/Arc within tolerance, wor
 
 **Invalid SVG file** — `parseSvg` wraps `svgelements` and re-raises any parse error as `SvgParseError`. `_Process.py`'s `run()` catches it around just the `parseSvg` call, prints it, and returns `False` instead of raising; the main loop re-prompts for a new file on `False` and retries. No config reload needed.
 
-**Output file safety** — `Plotter.createFile` writes to a temp file in the output directory and only `os.replace()`s it over the real target on full success. If anything fails mid-pipeline (missing settings keys, missing prefix/suffix gcode files, etc.), the output file is left untouched — can't be truncated by a partial crash.
+**Output file safety** — `lib/plot.py`'s `createFile` writes to a temp file in the output directory and only `os.replace()`s it over the real target on full success. If anything fails mid-pipeline (missing settings keys, missing prefix/suffix gcode files, etc.), the output file is left untouched — can't be truncated by a partial crash.
 
 ## Settings (`lib/settings.py`, `config/bambu_p1s_config.json`)
 
-`Settings` (a dataclass, in `lib/settings.py` alongside the `State` enum it keys heights/speeds/accels/lineTypes by) is shared across the whole pipeline — `parseSvg`, `generateInfill`, `orderPaths`, and `Plotter` all take a `Settings` instance and read the fields they need directly, rather than being passed individual values.
+`Settings` (a dataclass, in `lib/settings.py` alongside the `State` enum it keys heights/speeds/accels/lineTypes by) is shared across the whole pipeline — `parseSvg`, `generateInfill`, `orderPaths`, and `createFile` all take a `Settings` instance and read the fields they need directly, rather than being passed individual values.
 
 One config file per printer, named `config/<printer>_config.json` (currently just `bambu_p1s_config.json`). Loaded via `commentjson` (supports `//` comments). `machine` (startPos/penOffset/plateSize/drawableArea), `processing` (what is drawn on paper: tessellationTolerance, infillSpacing, prefix/suffix gcode template paths), `motion` (how the pen moves while drawing: per-state heights/speeds/accels, shortTravelThreshold, loadDelay), `visualization` (pen width, cosmetic layering/coloring for Bambu Studio preview), `debug` (showBoundingBoxes, optimizePathOrder, profiling). All fields are type-checked before use; on mismatch, the setting is skipped and a warning is printed.
 
-Positions (`endPos`, `penOffset`, `plateSize`, `drawableArea`) are stored as `complex`, matching how positions are represented everywhere else in the codebase — JSON's 2-element lists are converted via `complex(x, y)` in `initFromJson`. `startPos` is the one exception, kept as a `dict[str, float]` (`{"X":.., "Y":.., "Z":..}`) since it needs a Z component and `Plotter.pos` (current nozzle position) is built directly from it.
+Positions (`endPos`, `penOffset`, `plateSize`, `drawableArea`) are stored as `complex`, matching how positions are represented everywhere else in the codebase — JSON's 2-element lists are converted via `complex(x, y)` in `initFromJson`. `startPos` is the one exception, kept as a `dict[str, float]` (`{"X":.., "Y":.., "Z":..}`) since it needs a Z component and `createFile`'s per-file `_DrawState.pos` (current nozzle position) is built directly from it.
 
 ## Profiling
 
@@ -69,7 +69,7 @@ Set `debug.profiling: true` in the config file to run under `cProfile` and print
 - `_Process.py` — entry point & main loop (input prompts, retry logic, profiling wrapper)
 - `lib/geometry.py` — core geometry (Transform, Segment subclasses, Path, PathObject, Document, tessellation)
 - `lib/settings.py` — State enum, Settings dataclass, settings loader with error handling
-- `lib/plot.py` — gcode generation (Plotter)
+- `lib/plot.py` — gcode generation (`createFile` and its helpers)
 - `lib/svgparse.py` — SVG parsing (raises SvgParseError on invalid input)
 - `lib/route.py` — path ordering (TSP-like routing)
 - `lib/infill.py` — concentric infill generation

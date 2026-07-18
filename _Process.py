@@ -1,10 +1,10 @@
 import os, time, cProfile, pstats
 from enum import Enum, auto
 from lib.settings import Settings
-from lib.plot import Plotter
 from lib.svgparse import parseSvg, SvgParseError
 from lib.infill import generateInfill
 from lib.route import orderPaths
+from lib.plot import createFile
 
 settings = Settings()
 settings.initFromJson("config/bambu_p1s_config.json")
@@ -51,8 +51,7 @@ def run() -> RunResult:
     generateInfill(document, settings)
     orderPaths(document, settings)
 
-    plotter = Plotter(settings)
-    if not plotter.createFile(document, fileOut):
+    if not createFile(document, settings, fileOut):
         return RunResult.BAD_OUTPUT
 
     print(f"\nGcode created successfully in {time.perf_counter() - startTime:.3f}s")

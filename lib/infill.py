@@ -15,9 +15,8 @@ def _fromClipperPath(path) -> list[complex]:
     return [complex(x / _SCALE, y / _SCALE) for x, y in path]
 
 # generates concentric infill loops for every PathObject with a set fill color,
-# appending them as new subpaths to object.geometry (the original perimeter
-# subpaths are left untouched, and drawn first - see Plotter.addPath). runs in
-# printer space (mm), so must be called after parseSvg's transforms are applied.
+# appending them as new subpaths to object.geometry. runs in printer space (mm),
+# so must be called after parseSvg's transforms are applied.
 # settings.infillSpacing <= 0 disables infill entirely
 def generateInfill(document: Document, settings: Settings):
     spacing = settings.infillSpacing
