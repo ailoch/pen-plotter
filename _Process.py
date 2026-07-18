@@ -1,9 +1,13 @@
 import os, time, cProfile, pstats
 from enum import Enum, auto
+from lib.settings import Settings
 from lib.plot import Plotter
 from lib.svgparse import parseSvg, SvgParseError
 from lib.infill import generateInfill
 from lib.route import orderPaths
+
+settings = Settings()
+settings.initFromJson("config/bambu_p1s_config.json")
 
 def promptInputFile(previous: str | None = None) -> str:
     while True:
@@ -31,8 +35,6 @@ def promptOutputFile(previous: str | None = None) -> str:
 fileIn = promptInputFile()
 fileOut = promptOutputFile()
 
-plotter = Plotter("config/bambu_p1s_config.json")
-
 class RunResult(Enum):
     SUCCESS = auto()
     BAD_INPUT = auto() # re-prompt for the input file
@@ -41,14 +43,15 @@ class RunResult(Enum):
 def run() -> RunResult:
     startTime = time.perf_counter()
     try:
-        document = parseSvg(fileIn, plotter.settings)
+        document = parseSvg(fileIn, settings)
     except SvgParseError as e:
         print(e)
         return RunResult.BAD_INPUT
 
-    generateInfill(document, plotter.settings)
-    orderPaths(document, plotter.settings)
+    generateInfill(document, settings)
+    orderPaths(document, settings)
 
+    plotter = Plotter(settings)
     if not plotter.createFile(document, fileOut):
         return RunResult.BAD_OUTPUT
 
@@ -65,7 +68,7 @@ def runProfiled() -> RunResult:
         pstats.Stats(profiler).sort_stats("cumulative").print_stats(30)
     return result
 
-runPipeline = runProfiled if plotter.settings.profiling else run
+runPipeline = runProfiled if settings.profiling else run
 
 result = runPipeline()
 while result != RunResult.SUCCESS:

@@ -6,12 +6,8 @@ from lib.settings import State, Settings
 
 # handles gcode creation and I/O
 class Plotter:
-    def __init__(self, settingsFile: str | None = None):
-        self.settings = Settings()
-        if settingsFile:
-            self.settings.initFromJson(settingsFile)
-            #TODO: check if bounds fits within plate area
-
+    def __init__(self, settings: Settings):
+        self.settings = settings
         self.reset()
 
     # resets drawing state back to the configured start position.

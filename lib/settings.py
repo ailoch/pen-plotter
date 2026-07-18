@@ -139,5 +139,6 @@ class Settings:
                             print(f"Unknown style '{setting}' (reading {sectionName}.style)")
                     case _:
                         setattr(self, settingName, setting)
+        #TODO: check if bounds fits within plate area (mabye in seperate _validate method)
 
-        print(f"Loaded settings from file '{path}'")
+        print(f"Loaded settings from file '{path}'\n")
