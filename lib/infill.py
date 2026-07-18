@@ -1,4 +1,4 @@
-from lib.geometry import Path, Document
+from lib.geometry import Line, Path, Document
 from lib.settings import Settings
 
 try:
@@ -17,15 +17,13 @@ def _fromClipperPath(path) -> list[complex]:
 # generates concentric infill loops for every PathObject with a set fill color,
 # appending them as new subpaths to object.geometry. runs in printer space (mm),
 # so must be called after parseSvg's transforms are applied.
-# settings.infillSpacing <= 0 disables infill entirely
+# settings.infillSpacing <= 0 disables the concentric loops but closing of
+# fillable subpaths (see below) still happens
 def generateInfill(document: Document, settings: Settings):
     spacing = settings.infillSpacing
     tolerance = settings.tessellationTolerance
-    if spacing <= 0:
-        return
-    if pyclipper is None:
+    if spacing > 0 and pyclipper is None:
         print("Warning: pyclipper is not installed (pip install pyclipper); skipping infill generation")
-        return
 
     for obj in document.objects:
         if obj.style.fillColor is None:
@@ -35,10 +33,19 @@ def generateInfill(document: Document, settings: Settings):
         if not fillableSubpaths:
             continue
 
+        # a fillable subpath's outline may not actually return to its start point
+        # (e.g. an SVG path missing a trailing "Z") - close it in place so the drawn
+        # outline matches the shape that's being filled
+        for p in fillableSubpaths:
+            if not p.isClosed():
+                p.segments.append(Line(p.end(), p.start()))
+
+        if spacing <= 0 or pyclipper is None:
+            continue
+
         # tessellate with allowArcs=False so every subpath is flattened to Lines
         # only (all pyclipper understands) - Path.vertices() then gives the
-        # polygon points directly, correctly including the true final point for
-        # open paths (relying on SVG's implicit fill closure back to the start)
+        # polygon points directly (subpaths are already closed above)
         clipperPaths = [_toClipperPath(p.tessellate(tolerance, allowArcs=False).vertices()) for p in fillableSubpaths]
         clipperPaths = [p for p in clipperPaths if len(p) >= 3]
         if not clipperPaths:
