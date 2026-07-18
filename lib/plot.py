@@ -48,11 +48,13 @@ class PlotSettings:
 
     # visualization settings
     penWidth: float = .5
-    lineTypes: dict[State, str] = field(default_factory=dict)
     showPenPos: bool = True
     objectHeightChange: bool = False
-    style: str = "line type"
-    styleLineOrder: list[str] = field(default_factory=list)
+
+    style: str = "line type" # options are "line type", "instruction", and "segment"
+    lineTypes: dict[State, str] = field(default_factory=dict) # used when style is "line type"
+    instructionTypes: tuple[str, str, str, str] = ("Outer wall", "Overhang wall", "Support interface", "Gap infill") # used when style is "instruction" - index 0 is G0/G1, 1 is G2, 2 is G3, 3 is everything else
+    segmentTypes: tuple[str, ...] = field(default_factory=lambda: ("Sparse infill", "Support interface", "Overhang wall", "Internal solid infill", "Gap infill")) # used when style is "segment" - each instruction cycles to the next entry
 
     # debug settings
     showBoundingBoxes: bool = False
@@ -86,7 +88,7 @@ class PlotSettings:
 
         allowed = {f.name for f in fields(self)}
         # some settings are stored with different types than in the json
-        specialTypeSettings = {"startPos", "penOffset", "plateSize", "drawableArea", "endPos"}
+        specialTypeSettings = {"startPos", "penOffset", "plateSize", "drawableArea", "endPos", "instructionTypes", "segmentTypes"}
 
         for sectionName, data in data.items():
             for settingName, setting in data.items():
@@ -123,6 +125,16 @@ class PlotSettings:
                             print(f"Wrong type for setting {sectionName}.startPos: expected a 3-element list")
                             continue
                         self.startPos = dict(zip(("X", "Y", "Z"), setting))
+                    case "instructionTypes":
+                        if not isinstance(setting, list) or len(setting) != 4 or not all(isinstance(v, str) for v in setting):
+                            print(f"Wrong type for setting {sectionName}.instructionTypes: expected a 4-element list of strings")
+                            continue
+                        self.instructionTypes = tuple(setting) # type: ignore
+                    case "segmentTypes":
+                        if not isinstance(setting, list) or not all(isinstance(v, str) for v in setting):
+                            print(f"Wrong type for setting {sectionName}.segmentTypes: expected a list of strings")
+                            continue
+                        self.segmentTypes = tuple(setting)
                     case "style":
                         allowedStyles = ("line type", "instruction", "segment")
                         if setting.lower() in allowedStyles:
@@ -188,21 +200,21 @@ class Plotter:
                     continue
                 case "type":
                     feature = ""
-                    lineOrder = self.settings.styleLineOrder
                     match self.settings.style:
                         case "line type":
                             feature = val
                         case "instruction":
                             if 1 <= int(args["G"]) <= 3: # type: ignore
-                                feature = lineOrder[int(args["G"]) - 1] # type: ignore
+                                feature = self.settings.instructionTypes[int(args["G"]) - 1] # type: ignore
                             else:
-                                feature = lineOrder[len(lineOrder) - 1]
+                                feature = self.settings.instructionTypes[3]
                         case "segment":
-                            if self.lastMoveType in lineOrder:
-                                idx = (lineOrder.index(self.lastMoveType) + 1) % (len(lineOrder) - 1)
-                                feature = lineOrder[idx]
+                            segmentTypes = self.settings.segmentTypes
+                            if self.lastMoveType in segmentTypes:
+                                idx = (segmentTypes.index(self.lastMoveType) + 1) % len(segmentTypes)
+                                feature = segmentTypes[idx]
                             else:
-                                feature = lineOrder[0]
+                                feature = segmentTypes[0]
                     if feature != self.lastMoveType and "E" in args:
                         file.write(f"; FEATURE: {feature}\n")
                         self.lastMoveType = feature
