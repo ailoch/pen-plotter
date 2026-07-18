@@ -327,7 +327,11 @@ class Plotter:
             tempPath = None
             return True
         except PermissionError as e:
-            print(f'Could not open file "{e.filename}". Another program might be editing it.')
+            # os.replace(tempPath, fileOut) reports its src (tempPath) as e.filename
+            # even when the real problem is fileOut being locked - show fileOut
+            # instead so the message points at a path the user recognizes
+            badFile = fileOut if e.filename == tempPath else e.filename
+            print(f'Could not open file "{badFile}". Another program might be editing it.')
         except FileNotFoundError as e:
             print(f'Could not find file "{e.filename}".')
         finally:
