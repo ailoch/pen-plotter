@@ -3,6 +3,7 @@ from typing import cast
 import svgelements
 
 from lib.geometry import Style, Transform, Segment, Line, Arc, QuadraticBezier, CubicBezier, Path, PathObject, Document
+from lib.settings import Settings
 
 class SvgParseError(Exception):
     pass
@@ -127,7 +128,7 @@ def parseSvgElement(node: svgelements.SVGElement, docTransform: Transform, docum
     else:
         print(f"Ignored {type(node)} with name {node.id}")
 
-def parseSvg(svgPath: str, dimensions: complex, offset: complex) -> Document:
+def parseSvg(svgPath: str, settings: Settings) -> Document:
     document = Document()
     try:
         svg = svgelements.SVG.parse(svgPath)
@@ -139,12 +140,12 @@ def parseSvg(svgPath: str, dimensions: complex, offset: complex) -> Document:
 
     # this line can cause unexpected behavior sometimes
     # mabye ask user if they want to scale drawing?
-    #transform.scale(dimensions.imag / svg.viewbox.height) # scale to print area
+    #transform.scale(settings.drawableArea.imag / svg.viewbox.height) # scale to print area
 
     for child in svg:
         parseSvgElement(child, transform, document)
     for path in document.objects:
         # transform to printer space
-        path.transform *= [1, 0, 0, -1, -offset.real, 256-offset.imag]
+        path.transform *= [1, 0, 0, -1, -settings.penOffset.real, 256-settings.penOffset.imag]
         path.applyTransformations()
     return document

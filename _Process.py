@@ -41,15 +41,13 @@ class RunResult(Enum):
 def run() -> RunResult:
     startTime = time.perf_counter()
     try:
-        document = parseSvg(fileIn, plotter.settings.drawableArea, plotter.settings.penOffset)
+        document = parseSvg(fileIn, plotter.settings)
     except SvgParseError as e:
         print(e)
         return RunResult.BAD_INPUT
 
-    generateInfill(document, plotter.settings.infillSpacing, plotter.settings.tessellationTolerance)
-
-    if plotter.settings.optimizePathOrder:
-        orderPaths(document, complex(plotter.pos["X"], plotter.pos["Y"]), plotter.settings.endPos)
+    generateInfill(document, plotter.settings)
+    orderPaths(document, plotter.settings)
 
     if not plotter.createFile(document, fileOut):
         return RunResult.BAD_OUTPUT

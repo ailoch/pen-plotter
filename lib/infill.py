@@ -1,4 +1,5 @@
 from lib.geometry import Path, Document
+from lib.settings import Settings
 
 try:
     import pyclipper
@@ -17,8 +18,10 @@ def _fromClipperPath(path) -> list[complex]:
 # appending them as new subpaths to object.geometry (the original perimeter
 # subpaths are left untouched, and drawn first - see Plotter.addPath). runs in
 # printer space (mm), so must be called after parseSvg's transforms are applied.
-# spacing <= 0 disables infill entirely
-def generateInfill(document: Document, spacing: float, tolerance: float):
+# settings.infillSpacing <= 0 disables infill entirely
+def generateInfill(document: Document, settings: Settings):
+    spacing = settings.infillSpacing
+    tolerance = settings.tessellationTolerance
     if spacing <= 0:
         return
     if pyclipper is None:

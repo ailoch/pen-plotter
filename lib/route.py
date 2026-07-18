@@ -1,4 +1,5 @@
 from lib.geometry import Document
+from lib.settings import Settings
 
 # reorders the paths in items to minimize travel distance
 # if startPos/endPos are None, the solution will end at any position
@@ -146,11 +147,14 @@ def _orderSequence(items: list, startPos: complex | None, endPos: complex | None
     return [items[i] for i in order]
 
 # reorders document.objects (and each object's own sub-paths) to minimize travel distance
-def orderPaths(document: Document, startPos: complex = 0, endPos: complex = 0):
+# no-op if settings.optimizePathOrder is False
+def orderPaths(document: Document, settings: Settings):
+    if not settings.optimizePathOrder:
+        return
     # hendled in 2 passes to reduce runtime
     # pass 1: object subpath order
     for obj in document.objects:
         if len(obj.geometry) > 1:
             obj.geometry = _orderSequence(obj.geometry, None, None)
     # pass 2: object order
-    document.objects = _orderSequence(document.objects, startPos, endPos)
+    document.objects = _orderSequence(document.objects, complex(settings.startPos["X"], settings.startPos["Y"]), settings.endPos)
