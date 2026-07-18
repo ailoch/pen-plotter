@@ -1,4 +1,5 @@
 import os, time, cProfile, pstats
+from enum import Enum, auto
 from lib.plot import Plotter
 from lib.svgparse import parseSvg, SvgParseError
 from lib.infill import generateInfill
@@ -26,38 +27,48 @@ fileOut = promptOutputFile()
 
 plotter = Plotter("config/bambu_p1s_config.json")
 
-def run() -> bool:
+class RunResult(Enum):
+    SUCCESS = auto()
+    BAD_INPUT = auto() # re-prompt for the input file
+    BAD_OUTPUT = auto() # re-prompt for the output file
+
+def run() -> RunResult:
     startTime = time.perf_counter()
     try:
         document = parseSvg(fileIn, plotter.settings.drawableArea, plotter.settings.penOffset)
     except SvgParseError as e:
         print(e)
-        return False
+        return RunResult.BAD_INPUT
 
     generateInfill(document, plotter.settings.infillSpacing, plotter.settings.tessellationTolerance)
 
     if plotter.settings.optimizePathOrder:
         orderPaths(document, complex(plotter.pos["X"], plotter.pos["Y"]), plotter.settings.endPos)
 
-    success = plotter.createFile(document, fileOut)
+    if not plotter.createFile(document, fileOut):
+        return RunResult.BAD_OUTPUT
 
-    if success:
-        print(f"\nGcode created successfully in {time.perf_counter() - startTime:.3f}s")
-        print("Press enter to close")
-    return success
+    print(f"\nGcode created successfully in {time.perf_counter() - startTime:.3f}s")
+    print("Press enter to close")
+    return RunResult.SUCCESS
 
-def runProfiled() -> bool:
+def runProfiled() -> RunResult:
     profiler = cProfile.Profile()
     profiler.enable()
-    success = run()
+    result = run()
     profiler.disable()
-    if success: # only print stats on successful run
+    if result == RunResult.SUCCESS: # only print stats on successful run
         pstats.Stats(profiler).sort_stats("cumulative").print_stats(30)
-    return success
+    return result
 
 runPipeline = runProfiled if plotter.settings.profiling else run
 
-while not runPipeline():
-    fileIn = promptInputFile()
+result = runPipeline()
+while result != RunResult.SUCCESS:
+    if result == RunResult.BAD_INPUT:
+        fileIn = promptInputFile()
+    else:
+        fileOut = promptOutputFile()
+    result = runPipeline()
 
 input() # wait for user to press enter before closing window
