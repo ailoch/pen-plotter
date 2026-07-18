@@ -172,9 +172,12 @@ def createFile(geom: Document, settings: Settings, fileOut: str) -> bool:
             destFile.write("\n")
 
             objectCount = 0
+            numObjects = len(geom.objects)
             for object in geom.objects:
                 _addPath(state, settings, object, destFile, objectCount % 2 == 0 and settings.objectHeightChange)
                 objectCount += 1
+                if settings.objectHeightChange and objectCount < numObjects:
+                    destFile.write("; CHANGE_LAYER\n")
             if settings.showBoundingBoxes:
                 _moveRect(state, settings, geom.bounds(), destFile, State._DOCUMENT_BOUNDS)
 
