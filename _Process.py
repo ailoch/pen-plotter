@@ -5,16 +5,22 @@ from lib.svgparse import parseSvg, SvgParseError
 from lib.infill import generateInfill
 from lib.route import orderPaths
 
-def promptInputFile() -> str:
+def promptInputFile(previous: str | None = None) -> str:
     while True:
         path = input("Enter input file: ")
+        if not path and previous is not None: # empty input retries the previous file
+            return previous
         if os.path.isfile(path) and path.lower().endswith(".svg"):
             return path
         print(f"'{path}' is not an existing SVG file.")
 
-def promptOutputFile() -> str:
+def promptOutputFile(previous: str | None = None) -> str:
     while True:
         path = input("Enter output file: ")
+        # empty input retries the previous file, bypassing the overwrite prompt
+        # below since the user already answered it when they first entered this path
+        if not path and previous is not None:
+            return previous
         if os.path.exists(path):
             answer = input(f"'{path}' already exists. Overwrite? (y/n): ")
             if "y" in answer.lower():
@@ -66,9 +72,9 @@ runPipeline = runProfiled if plotter.settings.profiling else run
 result = runPipeline()
 while result != RunResult.SUCCESS:
     if result == RunResult.BAD_INPUT:
-        fileIn = promptInputFile()
+        fileIn = promptInputFile(fileIn)
     else:
-        fileOut = promptOutputFile()
+        fileOut = promptOutputFile(fileOut)
     result = runPipeline()
 
 input() # wait for user to press enter before closing window
