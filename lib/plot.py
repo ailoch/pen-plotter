@@ -154,8 +154,12 @@ class Plotter:
             self.settings.initFromJson(settingsFile)
             #TODO: check if bounds fits within plate area
 
-        self.lastMoveType = "Custom"
-        self.pos = self.settings.startPos
+        self.reset()
+
+    # resets drawing state back to the configured start position.
+    def reset(self):
+        self.lastMoveType = ""
+        self.pos = dict(self.settings.startPos) # copy - self.pos is mutated per-move, startPos must not be
         self.lastSpeed = 0
         self.lastAccel = 0
 
@@ -282,6 +286,7 @@ class Plotter:
             self._moveRect(object.bounds(), file, State._PATH_BOUNDS)
 
     def createFile(self, geom: Document, fileOut: str) -> bool:
+        self.reset()
         # write to a temp file in the same directory and only swap it in on success,
         # so a failure partway through won't truncate/corrupt a pre-existing fileOut
         tempPath = None
