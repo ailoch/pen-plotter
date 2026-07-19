@@ -25,8 +25,12 @@ class Settings:
     startPos: dict[str, float] = field(default_factory=lambda: {"X": 0, "Y": 0, "Z": 10})
     endPos: complex = 0
     penOffset: complex = 0
-    plateSize: complex = 150+150j
-    drawableArea: complex = 150+150j
+    plateSize: complex = 150+150j # plate rect size; lower-left corner fixed at origin
+    safeZoneSize: complex = 150+150j # size of the area the pen can reach without colliding
+    safeZoneOffset: complex = 0 # offset from origin of the safe zone's lower-left corner, in pen space
+
+    canvasSize: complex = 150+150j # size of the paper/drawable surface
+    canvasOffset: complex = 0 # offset from origin of the canvas's lower-left corner, in pen space
 
     # motion settings
     heights: dict[State, float] = field(default_factory=lambda: {State.DRAW: 0, State.TRAVEL: 10})
@@ -57,6 +61,33 @@ class Settings:
     optimizePathOrder: bool = True
     profiling: bool = False # if true, profiles _Process.py's pipeline and prints the slowest functions
 
+    # warns user if plate, safe zone, and canvas are not aligned properly
+    # also considers penOffset
+    def _validateBounds(self):
+        def contains(outerOffset: complex, outerSize: complex, innerOffset: complex, innerSize: complex, epsilon: float = 1e-6) -> bool:
+            return (
+                innerOffset.real >= outerOffset.real - epsilon and
+                innerOffset.imag >= outerOffset.imag - epsilon and
+                innerOffset.real + innerSize.real <= outerOffset.real + outerSize.real + epsilon and
+                innerOffset.imag + innerSize.imag <= outerOffset.imag + outerSize.imag + epsilon
+            )
+
+        # safeZoneOffset is already in pen space, i.e. already expressed in the same
+        # physical bed-frame numbers the plate rect uses, so this is a direct compare
+        safeZoneInPlate = contains(0, self.plateSize, self.safeZoneOffset, self.safeZoneSize)
+        if not safeZoneInPlate:
+            print("Warning: safe zone is not fully inside the plate; pen/toolhead may collide while drawing")
+
+        canvasInSafeZone = contains(self.safeZoneOffset, self.safeZoneSize, self.canvasOffset, self.canvasSize)
+        if not canvasInSafeZone:
+            print("Warning: canvas (draw zone) is not fully inside the safe zone; pen/toolhead may collide while drawing")
+
+        # the nozzle's actual gcode movement, driving the pen across the safe zone,
+        # sits at safeZoneOffset - penOffset (nozzle = pen - penOffset)
+        nozzleMovementInPlate = contains(0, self.plateSize, self.safeZoneOffset - self.penOffset, self.safeZoneSize)
+        if not nozzleMovementInPlate:
+            print("Warning: safe zone (accounting for penOffset) is not fully inside the plate; nozzle may collide while drawing")
+
     def initFromJson(self, path):
         try:
             with open(path) as f:
@@ -84,7 +115,7 @@ class Settings:
 
         allowed = {f.name for f in fields(self)}
         # some settings are stored with different types than in the json
-        specialTypeSettings = {"startPos", "penOffset", "plateSize", "drawableArea", "endPos", "instructionTypes", "segmentTypes"}
+        specialTypeSettings = {"startPos", "penOffset", "plateSize", "safeZoneSize", "safeZoneOffset", "canvasSize", "canvasOffset", "endPos", "instructionTypes", "segmentTypes"}
 
         for sectionName, data in data.items():
             for settingName, setting in data.items():
@@ -111,7 +142,7 @@ class Settings:
                             else:
                                 print(f"Unknown move type '{k}' (reading {sectionName}.{settingName})")
                         setattr(self, settingName, temp)
-                    case "penOffset" | "plateSize" | "drawableArea" | "endPos":
+                    case "penOffset" | "plateSize" | "safeZoneSize" | "safeZoneOffset" | "canvasSize" | "canvasOffset" | "endPos":
                         if not isinstance(setting, list) or len(setting) != 2:
                             print(f"Wrong type for setting {sectionName}.{settingName}: expected a 2-element list")
                             continue
@@ -139,6 +170,6 @@ class Settings:
                             print(f"Unknown style '{setting}' (reading {sectionName}.style)")
                     case _:
                         setattr(self, settingName, setting)
-        #TODO: check if bounds fits within plate area (mabye in seperate _validate method)
+        self._validateBounds()
 
         print(f"Loaded settings from file '{path}'\n")

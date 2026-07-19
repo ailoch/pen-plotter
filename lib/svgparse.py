@@ -132,6 +132,32 @@ def parseSvgElement(node: svgelements.SVGElement, docTransform: Transform, docum
     else:
         print(f"Ignored {type(node)} with name {node.id}")
 
+# asks the user how to reconcile a viewport size that doesn't match the canvas size,
+# returning the (scaleX, scaleY) factors to apply to the drawing.
+def _promptRescale(svgWidth: float, svgHeight: float, canvasSize: complex) -> tuple[float, float]:
+    canvasWidth, canvasHeight = canvasSize.real, canvasSize.imag
+    if abs(svgWidth - canvasWidth) < 1e-6 and abs(svgHeight - canvasHeight) < 1e-6:
+        return 1.0, 1.0
+
+    fitWidth = canvasWidth / svgWidth
+    fitHeight = canvasHeight / svgHeight
+
+    print(f"\nCanvas is {canvasWidth:g} x {canvasHeight:g} mm; SVG viewport is {svgWidth:g} x {svgHeight:g} mm.")
+    if abs(fitWidth - fitHeight) < 1e-6:
+        answer = input("Keep drawing as-is (k), or rescale to fit the canvas (b)? ").strip().lower()
+        if answer.startswith("b"):
+            return fitWidth, fitWidth
+        return 1.0, 1.0
+    else:
+        answer = input("Keep drawing as-is (k), rescale to fit width (x), rescale to fit height (y), or stretch to fill both axes (b)? ").strip().lower()
+        if answer.startswith("x"):
+            return fitWidth, fitWidth
+        if answer.startswith("y"):
+            return fitHeight, fitHeight
+        if answer.startswith("b"):
+            return fitWidth, fitHeight
+        return 1.0, 1.0
+
 def parseSvg(svgPath: str, settings: Settings) -> Document:
     document = Document()
     try:
@@ -139,19 +165,25 @@ def parseSvg(svgPath: str, settings: Settings) -> Document:
     except Exception as e:
         raise SvgParseError(f"Failed to parse SVG file '{svgPath}' ({e})") from e
     transform = Transform()
-    #TODO: add warning when document height and width don't match
     transform.scale(svg.viewbox.height / svg.height) # undo svgelements trying to scale document to viewport
 
-    # this line can cause unexpected behavior sometimes
-    # mabye ask user if they want to scale drawing?
-    #transform.scale(settings.drawableArea.imag / svg.viewbox.height) # scale to print area
+    svgWidth = cast(float, svg.viewbox.width)
+    svgHeight = cast(float, svg.viewbox.height)
+    scaleX, scaleY = _promptRescale(svgWidth, svgHeight, settings.canvasSize)
 
     textNames: list[str] = []
     for child in svg:
         parseSvgElement(child, transform, document, textNames)
+
+    # transform to printer space: scale per the rescale choice above, flip Y (svg is
+    # top-down), then center the scaled viewport on the canvas and compensate for the
+    # pen's offset from the nozzle
+    scaledWidth, scaledHeight = scaleX * svgWidth, scaleY * svgHeight
+    canvasCenter = settings.canvasOffset + settings.canvasSize / 2
+    translateX = canvasCenter.real - scaledWidth / 2 - settings.penOffset.real
+    translateY = canvasCenter.imag + scaledHeight / 2 - settings.penOffset.imag
     for path in document.objects:
-        # transform to printer space
-        path.transform *= [1, 0, 0, -1, -settings.penOffset.real, 256-settings.penOffset.imag]
+        path.transform *= [scaleX, 0, 0, -scaleY, translateX, translateY]
         path.applyTransformations()
     if textNames:
         print(f"\nThis converter does not support text. In Inkscape, select the text and go to Path > Object to Path to convert it to lines this converter can draw. Text not included in the output gcode: {', '.join(textNames)}")

@@ -4,8 +4,12 @@
         "startPos": [128, 128, 9], // starting position of the nozzle
         "endPos": [128, 256], // final position of the nozzle
         "penOffset": [-38, 0], // position of the pen relative to the nozzle
-        "plateSize": [256, 256], // size of the heatbed
-        "drawableArea": [217, 243] // area of the paper the pen can safely move to
+        "plateSize": [256, 256], // size of the heatbed; lower-left corner is fixed at the origin
+        "safeZoneSize": [217, 243], // size of the area the pen can safely move to without colliding
+        "safeZoneOffset": [0, 13], // offset of the safe zone's lower-left corner from the origin, in pen space
+
+        "canvasSize": [217, 243], // size of the paper/drawable surface - change this to change the paper size
+        "canvasOffset": [0, 13] // offset of the canvas's (draw zone's) lower-left corner from the origin, in pen space
     },
 
     // controls how the pen moves while drawing

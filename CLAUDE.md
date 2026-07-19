@@ -20,7 +20,7 @@ Key: `Path.point(t)` spans whole subpath (0 ≤ t ≤ 1), `isClosed()`, `isFilla
 
 ## Key Pipeline Stages
 
-**Parse** ([`lib/svgparse.py`](lib/svgparse.py)): SVG tree → `Document` of `PathObject`s. Handles groups, paths, rects, circles/ellipses; applies transform stack (flip Y for gcode, offset for pen geometry).
+**Parse** ([`lib/svgparse.py`](lib/svgparse.py)): SVG tree → `Document` of `PathObject`s. Handles groups, paths, rects, circles/ellipses; applies transform stack (flip Y for gcode, offset for pen geometry). If the SVG viewport size doesn't match `canvasSize`, `_promptRescale` asks the user how to reconcile it (see Alignment & Scaling below); the drawing is then centered on the canvas.
 
 **Infill** ([`lib/infill.py`](lib/infill.py)): For each fillable `PathObject`, use pyclipper to generate concentric inward-offset loops respecting `fill-rule` (`nonzero`/`evenodd`). Offset the same pyclipper paths repeatedly to avoid compounding drift. Re-fit loop polylines with `fitLines=True` to recover circular arcs. Gated by `isFillable()` (encloses area, computed via shoelace formula), not `isClosed()`.
 
@@ -48,9 +48,26 @@ Bidirectional greedy fitter: reduces any curve to Line/Arc within tolerance, wor
 
 `Settings` (a dataclass, in `lib/settings.py` alongside the `State` enum it keys heights/speeds/accels/lineTypes by) is shared across the whole pipeline — `parseSvg`, `generateInfill`, `orderPaths`, and `createFile` all take a `Settings` instance and read the fields they need directly, rather than being passed individual values.
 
-One config file per printer, named `config/<printer>_config.json` (currently just `bambu_p1s_config.json`). Loaded via `commentjson` (supports `//` comments). `machine` (startPos/penOffset/plateSize/drawableArea), `processing` (what is drawn on paper: tessellationTolerance, infillSpacing, prefix/suffix gcode template paths), `motion` (how the pen moves while drawing: per-state heights/speeds/accels, shortTravelThreshold, loadDelay), `visualization` (pen width, cosmetic layering/coloring for Bambu Studio preview), `debug` (showBoundingBoxes, optimizePathOrder, profiling). All fields are type-checked before use; on mismatch, the setting is skipped and a warning is printed.
+One config file per printer, named `config/<printer>_config.json` (currently just `bambu_p1s_config.json`). Loaded via `commentjson` (supports `//` comments). `machine` (startPos/penOffset/plateSize/safeZoneSize/safeZoneOffset/canvasSize/canvasOffset — see Alignment & Scaling below), `processing` (what is drawn on paper: tessellationTolerance, infillSpacing, prefix/suffix gcode template paths), `motion` (how the pen moves while drawing: per-state heights/speeds/accels, shortTravelThreshold, loadDelay), `visualization` (pen width, cosmetic layering/coloring for Bambu Studio preview), `debug` (showBoundingBoxes, optimizePathOrder, profiling). All fields are type-checked before use; on mismatch, the setting is skipped and a warning is printed. `initFromJson` ends with `_validateBounds()` (warn-and-continue, never resets to defaults — see Alignment & Scaling).
 
-Positions (`endPos`, `penOffset`, `plateSize`, `drawableArea`) are stored as `complex`, matching how positions are represented everywhere else in the codebase — JSON's 2-element lists are converted via `complex(x, y)` in `initFromJson`. `startPos` is the one exception, kept as a `dict[str, float]` (`{"X":.., "Y":.., "Z":..}`) since it needs a Z component and `createFile`'s per-file `_DrawState.pos` (current nozzle position) is built directly from it.
+Positions (`endPos`, `penOffset`, `plateSize`, `safeZoneSize`, `safeZoneOffset`, `canvasSize`, `canvasOffset`) are stored as `complex`, matching how positions are represented everywhere else in the codebase — JSON's 2-element lists are converted via `complex(x, y)` in `initFromJson`. `startPos` is the one exception, kept as a `dict[str, float]` (`{"X":.., "Y":.., "Z":..}`) since it needs a Z component and `createFile`'s per-file `_DrawState.pos` (current nozzle position) is built directly from it.
+
+## Alignment & Scaling (`lib/settings.py`, `lib/svgparse.py`)
+
+All positions/sizes below are in mm, lower-left-corner convention, and nest: **plate ⊇ safe zone ⊇ canvas**.
+
+- `plateSize` — the heatbed rect; its lower-left corner is fixed at the origin. This is the one physical/nozzle-space rect (the bed doesn't care about the pen).
+- `safeZoneSize` / `safeZoneOffset` — the rect the pen can move within without colliding with anything. `safeZoneOffset` is in **pen space** (where the pen tip should be), not gcode/nozzle space.
+- `canvasSize` / `canvasOffset` — the paper/drawable surface, also in pen space; `canvasSize` is the field users change to resize the paper.
+
+Since gcode X/Y commands the nozzle, and the pen tip sits at `nozzle + penOffset`, a pen-space position `P` corresponds to nozzle position `N = P - penOffset`. `parseSvg`'s printer-space transform (`lib/svgparse.py`) builds its translation this way: it centers the drawing on `canvasOffset + canvasSize/2` (a pen-space point) and only then subtracts `penOffset` to get the nozzle-space translation actually written to gcode.
+
+`Settings._validateBounds()` (called at the end of `initFromJson`) warns — but does **not** alter the loaded values or fall back to defaults — if any containment in the chain doesn't hold, checked in hierarchy order:
+- safe zone not fully inside the plate — `safeZoneOffset` is already pen-space (i.e. already expressed in the same physical bed-frame numbers the plate rect uses), so this is a direct compare.
+- canvas not fully inside the safe zone (both already pen-space, compared directly).
+- nozzle movement not fully inside the plate — the nozzle's actual gcode movement, driving the pen across the safe zone, sits at `safeZoneOffset - penOffset`. A safe zone that keeps the pen on the plate can still walk the nozzle off it, or vice versa, so both are checked.
+
+`parseSvg` always calls `_promptRescale(svgWidth, svgHeight, canvasSize)`, which returns `(1, 1)` with no prompt if the SVG viewport already matches `canvasSize`. Otherwise it prints both sizes and prompts for how to reconcile them: keep as-is, fit width, fit height, or stretch to fill both axes. When the canvas and viewport share an aspect ratio, fit-width/fit-height/stretch all reduce to the same scale, so the prompt collapses to just "keep as-is" vs. a single "rescale to fit" — using the same letter (`b`) as "stretch to fill both axes" in the general prompt, since they're the same operation in that case (helps muscle memory). The resulting scale is applied together with the Y-flip, canvas-centering, and `penOffset` compensation as one transform matrix per object (no separate steps).
 
 ## Profiling
 
@@ -59,6 +76,8 @@ Set `debug.profiling: true` in the config file to run under `cProfile` and print
 ## Hardware
 
 **Bambu Lab P1S**: E-axis represents pen-tip distance (not filament), `M221 S0` disables extrusion. Pen offset from nozzle via `penOffset` (applied after SVG Y-flip). Renderer clips to `[-5000, 5256]`. Cosmetic `; FEATURE:` comments drive preview coloring.
+
+`lib/plot.py`'s `BED_EXCLUDE_AREA` (`createFile`) still assumes the canvas is anchored in a plate corner (uses `canvasSize` only, ignoring `canvasOffset`/`safeZoneSize`/`safeZoneOffset`) — marked with a `TODO` pending a corner-agnostic (plate-minus-canvas) redesign.
 
 ## Dependencies
 
