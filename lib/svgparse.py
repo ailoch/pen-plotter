@@ -23,7 +23,7 @@ def readStyle(element: svgelements.SVGElement) -> Style:
         #fillColor=getattr(element, "fill", [0, 0, 0])
     )
 
-def parseSvgElement(node: svgelements.SVGElement, docTransform: Transform, document: Document):
+def parseSvgElement(node: svgelements.SVGElement, docTransform: Transform, document: Document, textNames: list[str]):
     nodeTransform = docTransform @ Transform(getattr(node, "transform", None))
     if isinstance(node, svgelements.Rect):
         temp = PathObject(str(node.id)) # str() to make pylance happy
@@ -121,7 +121,10 @@ def parseSvgElement(node: svgelements.SVGElement, docTransform: Transform, docum
         document.add(temp)
     elif isinstance(node, svgelements.Group):
         for child in node:
-            parseSvgElement(child, docTransform, document)
+            parseSvgElement(child, docTransform, document, textNames)
+    elif isinstance(node, svgelements.Text):
+        if node.text: # only print for non empty text objects
+            textNames.append(str(node.id))
     # isinstance() won't work on SVGElement because it encapsulates all other svg classes
     elif isinstance(node, svgelements.SVG) or type(node) == svgelements.svgelements.SVGElement:
         pass # these element types can be safely ignored because they are not geometry
@@ -142,10 +145,13 @@ def parseSvg(svgPath: str, settings: Settings) -> Document:
     # mabye ask user if they want to scale drawing?
     #transform.scale(settings.drawableArea.imag / svg.viewbox.height) # scale to print area
 
+    textNames: list[str] = []
     for child in svg:
-        parseSvgElement(child, transform, document)
+        parseSvgElement(child, transform, document, textNames)
     for path in document.objects:
         # transform to printer space
         path.transform *= [1, 0, 0, -1, -settings.penOffset.real, 256-settings.penOffset.imag]
         path.applyTransformations()
+    if textNames:
+        print(f"\nThis converter does not support text. In Inkscape, select the text and go to Path > Object to Path to convert it to lines this converter can draw. Text not included in the output gcode: {', '.join(textNames)}")
     return document
