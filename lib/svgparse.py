@@ -104,6 +104,7 @@ def parseSvgElement(node: svgelements.SVGElement, docTransform: Transform, docum
                 beta = (u.real*r.imag - u.imag*r.real) / det
 
                 currentSegments.append(Arc(arcCenter, u, v, math.atan2(beta, alpha), sweep))
+                current = part.end
             elif isinstance(part, svgelements.QuadraticBezier):
                 currentSegments.append(QuadraticBezier(current, part.control, part.end))
                 current = part.end
