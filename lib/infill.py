@@ -1,6 +1,6 @@
 from typing import Any, cast
 from lib.geometry import Line, Path, Document
-from lib.settings import Settings
+from lib.settings import LineType, Settings
 
 try:
     import pyclipper
@@ -21,6 +21,16 @@ def _toClipperPath(points: list[complex]) -> list[tuple[int, int]]:
 
 def _fromClipperPath(path) -> list[complex]:
     return [complex(x / _SCALE, y / _SCALE) for x, y in path]
+
+# converts a clipper-int loop back to a closed, tessellated Path tagged with lineType,
+# and appends it to geometry - shared by the concentric and gap-fill loop passes
+def _appendLoop(geometry: list[Path], loopPts, lineType: LineType, tolerance: float):
+    realPts = _fromClipperPath(loopPts)
+    if len(realPts) < 3:
+        return
+    loop = Path.fromPoints(realPts, closed=True)
+    loop.lineType = lineType
+    geometry.append(loop.tessellate(tolerance, fitLines=True))
 
 # single offset of closed polygons for the DETECTION geometry (the gap-fill opening
 # pass) - never drawn, so JT_SQUARE's cheap few-point corners are fine (at nozzle scale
@@ -219,16 +229,13 @@ def generateInfill(document: Document, settings: Settings):
 
         # the drawn loops - offset inward from the resolved region at spacing intervals
         loops = _concentricLoops(region, spacing, spacing, tolerance, str(obj.id))
+        for loopPts in loops:
+            _appendLoop(obj.geometry, loopPts, LineType.INFILL, tolerance)
 
         # fill whatever those loops (plus the outline) leave uncovered: acute-corner
         # wedges and fractional-width slivers. coverage is measured against every drawn
         # centerline, so gap strokes land only where the pen genuinely misses.
         if settings.generateGapInfill:
-            loops.extend(_gapFill(region, clipperPaths + loops, spacing, tolerance, str(obj.id)))
-
-        for loopPts in loops:
-            realPts = _fromClipperPath(loopPts)
-            if len(realPts) < 3:
-                continue
-            loop = Path.fromPoints(realPts, closed=True)
-            obj.geometry.append(loop.tessellate(tolerance, fitLines=True))
+            gapLoops = _gapFill(region, clipperPaths + loops, spacing, tolerance, str(obj.id))
+            for loopPts in gapLoops:
+                _appendLoop(obj.geometry, loopPts, LineType.GAP_INFILL, tolerance)

@@ -3,20 +3,27 @@ from enum import Enum, auto
 from dataclasses import dataclass, field, fields
 import commentjson
 
-class State(Enum):
-    DRAW = auto()
+class LineType(Enum):
+    PERIMETER = auto()
+    INFILL = auto()
+    GAP_INFILL = auto()
     TRAVEL = auto()
     _SEGMENT_BOUNDS = auto()
     _PATH_BOUNDS = auto()
     _DOCUMENT_BOUNDS = auto()
 
-# maps settings.json's move-type keys (heights/speeds/accels/lineTypes) to their State
-_STATE_KEYS = {
-    "draw": State.DRAW,
-    "travel": State.TRAVEL,
-    "_segmentBounds": State._SEGMENT_BOUNDS,
-    "_pathBounds": State._PATH_BOUNDS,
-    "_documentBounds": State._DOCUMENT_BOUNDS,
+# the three draw roles that "draw" (in heights/speeds/accels/lineTypes) expands to
+_DRAW_LINE_TYPES = (LineType.PERIMETER, LineType.INFILL, LineType.GAP_INFILL)
+
+# maps settings.json's move-type keys (heights/speeds/accels/lineTypes) to their LineType
+_LINE_TYPE_KEYS = {
+    "perimeter": LineType.PERIMETER,
+    "infill": LineType.INFILL,
+    "gapInfill": LineType.GAP_INFILL,
+    "travel": LineType.TRAVEL,
+    "_segmentBounds": LineType._SEGMENT_BOUNDS,
+    "_pathBounds": LineType._PATH_BOUNDS,
+    "_documentBounds": LineType._DOCUMENT_BOUNDS,
 }
 
 @dataclass
@@ -33,9 +40,9 @@ class Settings:
     canvasOffset: complex = 0 # offset from origin of the canvas's lower-left corner, in pen space
 
     # motion settings
-    heights: dict[State, float] = field(default_factory=lambda: {State.DRAW: 0, State.TRAVEL: 10})
-    speeds: dict[State, float] = field(default_factory=lambda: {State.TRAVEL: 3000})
-    accels: dict[State, float] = field(default_factory=lambda: {State.TRAVEL: 1000})
+    heights: dict[LineType, float] = field(default_factory=lambda: {LineType.PERIMETER: 0, LineType.INFILL: 0, LineType.GAP_INFILL: 0, LineType.TRAVEL: 10})
+    speeds: dict[LineType, float] = field(default_factory=lambda: {LineType.TRAVEL: 3000})
+    accels: dict[LineType, float] = field(default_factory=lambda: {LineType.TRAVEL: 1000})
     shortTravelThreshold: float = .5
     loadDelay: float = 20
 
@@ -55,8 +62,8 @@ class Settings:
     styleChangeMessage: str = "" # printed before a line whose feature (draw role) changes; %s is replaced with the feature name
     layerChangeMessage: str = "" # printed between objects when objectHeightChange is true
 
-    style: str = "line type" # options are "line type", "instruction", and "segment"
-    lineTypes: dict[State, str] = field(default_factory=dict) # used when style is "line type"
+    style: str = "role" # options are "role", "instruction", and "segment"
+    lineTypes: dict[LineType, str] = field(default_factory=dict) # used when style is "role"
     instructionTypes: tuple[str, str, str, str] = ("Outer wall", "Overhang wall", "Support interface", "Gap infill") # used when style is "instruction" - index 0 is G0/G1, 1 is G2, 2 is G3, 3 is everything else
     segmentTypes: tuple[str, ...] = field(default_factory=lambda: ("Sparse infill", "Support interface", "Overhang wall", "Internal solid infill", "Gap infill")) # used when style is "segment" - each instruction cycles to the next entry
 
@@ -145,10 +152,19 @@ class Settings:
                 match settingName: # some properties need special logic
                     case "heights" | "speeds" | "accels" | "lineTypes":
                         temp = {}
+                        # "draw" sets all three draw roles (perimeter/infill/gapInfill) at
+                        # once; an explicit role key below overrides it for that role
+                        if "draw" in setting:
+                            v = setting["draw"]
+                            v = v*60 if settingName == "speeds" else v
+                            for lt in _DRAW_LINE_TYPES:
+                                temp[lt] = v
                         for k, v in setting.items():
-                            if k in _STATE_KEYS:
+                            if k == "draw":
+                                continue
+                            if k in _LINE_TYPE_KEYS:
                                 # speeds needs to be converted mm/min -> mm/s
-                                temp[_STATE_KEYS[k]] = v*60 if settingName == "speeds" else v
+                                temp[_LINE_TYPE_KEYS[k]] = v*60 if settingName == "speeds" else v
                             else:
                                 print(f"Unknown move type '{k}' (reading {sectionName}.{settingName})")
                         setattr(self, settingName, temp)
@@ -173,7 +189,7 @@ class Settings:
                             continue
                         self.segmentTypes = tuple(setting)
                     case "style":
-                        allowedStyles = ("line type", "instruction", "segment")
+                        allowedStyles = ("role", "instruction", "segment")
                         if setting.lower() in allowedStyles:
                             self.style = setting.lower()
                         else:

@@ -14,6 +14,7 @@
 
     // controls how the pen moves while drawing
     "motion": {
+        // line types: draw (controls all drawing line types), "perimeter", "infill", "gap infill", "travel"
         "heights": {"draw": 2, "travel": 3.5, "_segmentBounds": 2.1, "_pathBounds": 2.2, "_documentBounds": 2.3}, // mm
         "speeds": {"draw": 30, "travel": 250}, // mm/s
         "accels": {"draw": 3000, "travel": 15000}, // mm/s^2
@@ -42,11 +43,11 @@
         "styleChangeMessage": "; FEATURE: %s", // printed before a line whose feature (draw role) changes; %s will be replaced by the feature name
         "layerChangeMessage": "; CHANGE_LAYER", // printed between objects when objectHeightChange is true
 
-        "style": "line type", // options are "line type", "instruction", and "segment"
-          // line type: shows role of lines in slicer view (uses lineTypes above; instructionTypes/segmentTypes are ignored)
+        "style": "role", // options are "role", "instruction", and "segment"
+          // role: shows role of lines in slicer view (uses lineTypes)
           // instruction: shows g1/g2/g3 instructions with different colors (uses instructionTypes)
           // segment: shows each line segment as a different color, cycling through segmentTypes
-        "lineTypes": {"draw": "Outer wall", "_segmentBounds": "Support transition", "_pathBounds": "Support interface", "_documentBounds": "Support"},
+        "lineTypes": {"perimeter": "Outer wall", "infill": "Internal solid infill", "gapInfill": "Gap infill", "_segmentBounds": "Support transition", "_pathBounds": "Support interface", "_documentBounds": "Support"},
         "instructionTypes": ["Sparse infill", "Support interface", "Overhang wall", "Gap infill"], // index 0 is G1, 1 is G2, 2 is G3, 3 is everything else
         "segmentTypes": ["Top surface", "Outer wall", "Inner wall", "Support", "Bridge", "Internal solid infill"]
     },

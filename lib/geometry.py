@@ -3,6 +3,7 @@ from abc import ABC, abstractmethod
 from typing import Self
 from dataclasses import dataclass, field
 from scipy.integrate import quad
+from lib.settings import LineType
 
 # stores an object style (line width, color, fill)
 @dataclass
@@ -453,6 +454,7 @@ class CubicBezier(Segment):
 @dataclass
 class Path:
     segments: list[Segment] = field(default_factory=list)
+    lineType: LineType = LineType.PERIMETER
 
     def length(self) -> float:
         len = 0
@@ -734,7 +736,7 @@ class Path:
     def tessellate(self, tolerance: float, allowArcs: bool = True, fitLines: bool = False) -> "Path":
         n = len(self.segments)
         if n == 0:
-            return Path([])
+            return Path([], lineType=self.lineType)
 
         # Lines-only output is only ever consumed as a flattened polygon (infill),
         # which needs points within tolerance, not a minimal segment count - so
@@ -744,7 +746,7 @@ class Path:
             for segment in self.segments:
                 pts = segment.toPoints(tolerance)
                 flat.extend(Line(pts[i], pts[i+1]) for i in range(len(pts) - 1))
-            return Path(flat)
+            return Path(flat, lineType=self.lineType)
 
         def isSimple(segment: Segment) -> bool:
             if isinstance(segment, Line):
@@ -781,7 +783,7 @@ class Path:
             for s in self._fitRange(runStart / n, 1.0, tolerance, allowArcs):
                 appendMerging(s)
 
-        return Path(newSegments)
+        return Path(newSegments, lineType=self.lineType)
 
     # builds a Path connecting the given points with Lines; if
     # closed, an additional Line connects the last point back to the first

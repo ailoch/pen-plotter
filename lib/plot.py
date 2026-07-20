@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from typing import TextIO
 
 from lib.geometry import Line, Arc, PathObject, Document
-from lib.settings import State, Settings
+from lib.settings import LineType, Settings
 
 # formats a gcode number: fixed then trimmed of trailing zeros (so 256.0 -> "256",
 # 12.5 -> "12.5")
@@ -20,7 +20,7 @@ class _DrawState:
     lastSpeed: float = 0
     lastAccel: float = 0
 
-def _moveRect(state: _DrawState, settings: Settings, bounds: tuple[float, float, float, float], file: TextIO, lineType: State | None = None):
+def _moveRect(state: _DrawState, settings: Settings, bounds: tuple[float, float, float, float], file: TextIO, lineType: LineType | None = None):
     edges: tuple[complex, complex, complex, complex] = (bounds[0], bounds[1]*1j, bounds[2], bounds[3]*1j)
 
     _penMove(state, settings, edges[0]+edges[1], file, True)
@@ -39,7 +39,7 @@ def _fileAppend(srcFile: TextIO, destFile: TextIO, replace: dict[str, str | floa
 
 # adds a gcode line to the file with the specified arguments
 # param "accel" sets printer accel using m204 in seperate instruction
-def _addLine(state: _DrawState, settings: Settings, args: dict[str, str | float | None], file: TextIO, lineType: State | None = None):
+def _addLine(state: _DrawState, settings: Settings, args: dict[str, str | float | None], file: TextIO, lineType: LineType | None = None):
     if lineType:
         args["F"] = settings.speeds.get(lineType)
         args["accel"] = settings.accels.get(lineType)
@@ -64,7 +64,7 @@ def _addLine(state: _DrawState, settings: Settings, args: dict[str, str | float 
                     continue
                 feature = ""
                 match settings.style:
-                    case "line type":
+                    case "role":
                         feature = val
                     case "instruction":
                         if 1 <= int(args["G"]) <= 3: # type: ignore
@@ -99,50 +99,55 @@ def _addLine(state: _DrawState, settings: Settings, args: dict[str, str | float 
     if lineIsValid:
         file.write(line.strip() + "\n")
 
+# emits a Z move (if needed) to the draw height for lineType - shared by draw-move
+# penMoves and by Arc draws, which (unlike Line draws) have no X/Y/Z move of their
+# own to piggyback a height change on since G2/G3 only carries the endpoint
+def _setDrawHeight(state: _DrawState, settings: Settings, file: TextIO, lineType: LineType | None = None, raised: bool = False):
+    newHeight = settings.heights[lineType or LineType.PERIMETER]
+    if raised:
+        newHeight += .001
+    if state.pos["Z"] != newHeight:
+        _addLine(state, settings, {"G": "1", "Z": newHeight}, file)
+
 # moves pen to the specified location
-def _penMove(state: _DrawState, settings: Settings, pos: complex, file: TextIO, travel: bool = False, lineType: State | None = None, raised: bool = False):
+def _penMove(state: _DrawState, settings: Settings, pos: complex, file: TextIO, travel: bool = False, lineType: LineType | None = None, raised: bool = False):
     distSquared = (pos.real - state.pos["X"]) ** 2 + (pos.imag - state.pos["Y"]) ** 2
     if distSquared >= .000001: # moves shorter than .001 mm are probably caused by rounding errors
         if travel:
             if distSquared >= settings.shortTravelThreshold ** 2: # long travel
-                _addLine(state, settings, {"G": "1", "Z": settings.heights[State.TRAVEL]}, file, State.TRAVEL)
+                _addLine(state, settings, {"G": "1", "Z": settings.heights[LineType.TRAVEL]}, file, LineType.TRAVEL)
                 _addLine(state, settings, {"G": "1", "X": str(pos.real), "Y": str(pos.imag)}, file)
-                newHeight = settings.heights[State.DRAW]
-                if raised:
-                    newHeight += .001
-                _addLine(state, settings, {"G": "1", "Z": newHeight}, file)
+                _setDrawHeight(state, settings, file, lineType, raised)
             else: # short travel
-                _addLine(state, settings, {"G": "1", "X": str(pos.real), "Y": str(pos.imag)}, file, State.DRAW)
+                _addLine(state, settings, {"G": "1", "X": str(pos.real), "Y": str(pos.imag)}, file, lineType or LineType.PERIMETER)
         else: # draw moves
-            newHeight = settings.heights[lineType or State.DRAW]
-            if raised:
-                newHeight += .001
-            if state.pos["Z"] != newHeight:
-                _addLine(state, settings, {"G": "1", "Z": newHeight}, file)
-            _addLine(state, settings, {"G": "1", "X": str(pos.real), "Y": str(pos.imag), "E": math.hypot(pos.real-state.pos["X"], pos.imag-state.pos["Y"])}, file, lineType or State.DRAW)
+            _setDrawHeight(state, settings, file, lineType, raised)
+            _addLine(state, settings, {"G": "1", "X": str(pos.real), "Y": str(pos.imag), "E": math.hypot(pos.real-state.pos["X"], pos.imag-state.pos["Y"])}, file, lineType or LineType.PERIMETER)
 
 def _addPath(state: _DrawState, settings: Settings, object: PathObject, file: TextIO, raised: bool = False):
     for path in object.geometry:
+        lineType = path.lineType
         tessellated = path.tessellate(settings.tessellationTolerance)
         for segment in tessellated.segments:
             if isinstance(segment, Line):
-                _penMove(state, settings, segment.start, file, True, raised=raised)
-                _penMove(state, settings, segment.end, file, raised=raised)
+                _penMove(state, settings, segment.start, file, True, lineType, raised=raised)
+                _penMove(state, settings, segment.end, file, lineType=lineType, raised=raised)
             elif isinstance(segment, Arc):
-                _penMove(state, settings, segment.point(0), file, True, raised=raised)
+                _penMove(state, settings, segment.point(0), file, True, lineType, raised=raised)
+                _setDrawHeight(state, settings, file, lineType, raised)
                 centerOffset = segment.center - segment.point(0)
                 end = segment.point(1)
                 params = {"G": "2", "X": end.real, "Y": end.imag, "I": centerOffset.real, "J": centerOffset.imag, "E": segment.length()}
                 if segment.sweep < 0:
                     params["G"] = "3"
-                _addLine(state, settings, params, file, State.DRAW)
+                _addLine(state, settings, params, file, lineType)
             else:
                 print(f"Unknown path type {type(segment)}")
     if settings.showBoundingBoxes:
         for path in object.geometry:
             for segment in path.segments:
-                _moveRect(state, settings, segment.bounds(), file, State._SEGMENT_BOUNDS)
-        _moveRect(state, settings, object.bounds(), file, State._PATH_BOUNDS)
+                _moveRect(state, settings, segment.bounds(), file, LineType._SEGMENT_BOUNDS)
+        _moveRect(state, settings, object.bounds(), file, LineType._PATH_BOUNDS)
 
 _EXCLUDE_EPS = 1e-6
 
@@ -272,9 +277,9 @@ def createFile(geom: Document, settings: Settings, fileOut: str) -> bool:
         fd, tempPath = tempfile.mkstemp(dir=outDir, suffix=".tmp")
         with os.fdopen(fd, "w") as destFile:
             replace: dict[str, float | str] = {
-                "TRAVEL_HEIGHT": settings.heights[State.TRAVEL],
-                "TRAVEL_SPEED": settings.speeds[State.TRAVEL],
-                "TRAVEL_ACCEL": settings.accels[State.TRAVEL],
+                "TRAVEL_HEIGHT": settings.heights[LineType.TRAVEL],
+                "TRAVEL_SPEED": settings.speeds[LineType.TRAVEL],
+                "TRAVEL_ACCEL": settings.accels[LineType.TRAVEL],
                 "LINE_WIDTH": settings.penWidth,
                 "LOAD_DELAY": settings.loadDelay,
                 "END_X": _fmtNum(settings.endPos.real),
@@ -300,7 +305,7 @@ def createFile(geom: Document, settings: Settings, fileOut: str) -> bool:
                 if settings.objectHeightChange and settings.layerChangeMessage != "" and objectCount < numObjects:
                     destFile.write(settings.layerChangeMessage + "\n\n")
             if settings.showBoundingBoxes:
-                _moveRect(state, settings, geom.bounds(), destFile, State._DOCUMENT_BOUNDS)
+                _moveRect(state, settings, geom.bounds(), destFile, LineType._DOCUMENT_BOUNDS)
 
             destFile.write("\n")
             with open(settings.suffixFile, "r") as srcFile:
