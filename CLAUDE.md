@@ -77,7 +77,7 @@ Set `debug.profiling: true` in the config file to run under `cProfile` and print
 
 **Bambu Lab P1S**: E-axis represents pen-tip distance (not filament), `M221 S0` disables extrusion. Pen offset from nozzle via `penOffset` (applied after SVG Y-flip). Renderer clips to `[-5000, 5256]`. Cosmetic `; FEATURE:` comments drive preview coloring.
 
-`lib/plot.py`'s `BED_EXCLUDE_AREA` (`createFile`) still assumes the canvas is anchored in a plate corner (uses `canvasSize` only, ignoring `canvasOffset`/`safeZoneSize`/`safeZoneOffset`) — marked with a `TODO` pending a corner-agnostic (plate-minus-canvas) redesign.
+`lib/plot.py`'s `BED_EXCLUDE_AREA` is built by `_bedExcludeArea` (plate rect minus the canvas rect) for the slicer to render the drawable area. The canvas is placed per `canvasOffset` — in pen space when `showPenPos` (the slicer applies `EXTRUDER_OFFSET = penOffset`), else shifted by `-penOffset` into nozzle space. Since both rects are axis-aligned, the shape is classified directly from which of the 4 plate edges (bottom/right/top/left) the canvas fails to touch ("gap" flags), no polygon library needed: 0 gaps → nothing excluded; all 4 → a ring (`_bridgeContours` keyholes the outer plate loop to the inner canvas hole); 2 opposite gaps → two disjoint strips (also `_bridgeContours`-joined); a contiguous run of 1-3 gaps → `_perimeterWalk` traces a single simple polygon (|/L/C) directly, no seam needed. `_removeRedundantPoints` then drops collinear midpoints from all cases. `safeZone` is not part of this polygon.
 
 ## Dependencies
 
