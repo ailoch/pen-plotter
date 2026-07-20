@@ -92,6 +92,12 @@ class Settings:
         if not nozzleMovementInPlate:
             print("Warning: safe zone (accounting for penOffset) is not fully inside the plate; nozzle may collide while drawing")
 
+    # warns user about invalid/inconsistent setting combinations; never resets to defaults
+    def _validate(self):
+        self._validateBounds()
+        if self.generateGapInfill and self.infillSpacing <= 0:
+            print("Warning: generateGapInfill is enabled but infill is disabled; gap infill will have no effect")
+
     def initFromJson(self, path):
         try:
             with open(path) as f:
@@ -174,6 +180,6 @@ class Settings:
                             print(f"Unknown style '{setting}' (reading {sectionName}.style)")
                     case _:
                         setattr(self, settingName, setting)
-        self._validateBounds()
+        self._validate()
 
         print(f"Loaded settings from file '{path}'\n")
