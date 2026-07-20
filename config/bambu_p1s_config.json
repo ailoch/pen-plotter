@@ -37,6 +37,10 @@
         "showPenPos": true, // if false, nozzle position will be shown in slicer
         "objectHeightChange": true, // if true, slightly increases the height of every other object so they show as seperate layers when viewed in the slicer
 
+        // leave empty to disable these
+        "styleChangeMessage": "; FEATURE: %s", // printed before a line whose feature (draw role) changes; %s will be replaced by the feature name
+        "layerChangeMessage": "; CHANGE_LAYER", // printed between objects when objectHeightChange is true
+
         "style": "line type", // options are "line type", "instruction", and "segment"
           // line type: shows role of lines in slicer view (uses lineTypes above; instructionTypes/segmentTypes are ignored)
           // instruction: shows g1/g2/g3 instructions with different colors (uses instructionTypes)

@@ -51,6 +51,9 @@ class Settings:
     showPenPos: bool = True
     objectHeightChange: bool = False
 
+    styleChangeMessage: str = "" # printed before a line whose feature (draw role) changes; %s is replaced with the feature name
+    layerChangeMessage: str = "" # printed between objects when objectHeightChange is true
+
     style: str = "line type" # options are "line type", "instruction", and "segment"
     lineTypes: dict[State, str] = field(default_factory=dict) # used when style is "line type"
     instructionTypes: tuple[str, str, str, str] = ("Outer wall", "Overhang wall", "Support interface", "Gap infill") # used when style is "instruction" - index 0 is G0/G1, 1 is G2, 2 is G3, 3 is everything else

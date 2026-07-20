@@ -60,6 +60,8 @@ def _addLine(state: _DrawState, settings: Settings, args: dict[str, str | float 
                     state.lastAccel = val # type: ignore
                 continue
             case "type":
+                if settings.styleChangeMessage == "":
+                    continue
                 feature = ""
                 match settings.style:
                     case "line type":
@@ -77,7 +79,7 @@ def _addLine(state: _DrawState, settings: Settings, args: dict[str, str | float 
                         else:
                             feature = segmentTypes[0]
                 if feature != state.lastMoveType and "E" in args:
-                    file.write(f"; FEATURE: {feature}\n")
+                    file.write(settings.styleChangeMessage % feature + "\n")
                     state.lastMoveType = feature # type: ignore
                 continue
             case "F":
@@ -295,8 +297,8 @@ def createFile(geom: Document, settings: Settings, fileOut: str) -> bool:
             for object in geom.objects:
                 _addPath(state, settings, object, destFile, objectCount % 2 == 0 and settings.objectHeightChange)
                 objectCount += 1
-                if settings.objectHeightChange and objectCount < numObjects:
-                    destFile.write("; CHANGE_LAYER\n")
+                if settings.objectHeightChange and settings.layerChangeMessage != "" and objectCount < numObjects:
+                    destFile.write(settings.layerChangeMessage + "\n\n")
             if settings.showBoundingBoxes:
                 _moveRect(state, settings, geom.bounds(), destFile, State._DOCUMENT_BOUNDS)
 
