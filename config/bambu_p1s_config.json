@@ -25,6 +25,7 @@
     "processing": {
         "tessellationTolerance": 0.012, // max allowed deviation (mm) of gcode from the true curve
         "infillSpacing": 0.3, // distance (mm) between concentric infill loops; 0 disables infill
+        "generateGapInfill": true, // if true, adds extra strokes to fill small gaps in the infill
 
         "prefixFile": "gcode_templates/bambu_p1s_prefix.gcode",
         "suffixFile": "gcode_templates/bambu_p1s_suffix.gcode"

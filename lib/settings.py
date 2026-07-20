@@ -42,6 +42,7 @@ class Settings:
     # processing settings
     tessellationTolerance: float = .012
     infillSpacing: float = .3 # distance between concentric infill loops (mm); <= 0 disables infill
+    generateGapInfill: bool = True # if true, adds extra strokes to fill small gaps in the infill
 
     prefixFile: str = "gcode_templates/default_prefix.gcode"
     suffixFile: str = "gcode_templates/default_suffix.gcode"
