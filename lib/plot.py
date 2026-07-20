@@ -56,7 +56,7 @@ def _addLine(state: _DrawState, settings: Settings, args: dict[str, str | float 
         match param:
             case "accel":
                 if val != float(state.lastAccel):
-                    file.write(f"M204 S{val}\n")
+                    file.write(f"M204 S{_fmtNum(val)}\n")
                     state.lastAccel = val # type: ignore
                 continue
             case "type":
@@ -277,12 +277,12 @@ def createFile(geom: Document, settings: Settings, fileOut: str) -> bool:
                 "TRAVEL_ACCEL": settings.accels[State.TRAVEL],
                 "LINE_WIDTH": settings.penWidth,
                 "LOAD_DELAY": settings.loadDelay,
-                "END_X": settings.endPos.real,
-                "END_Y": settings.endPos.imag
+                "END_X": _fmtNum(settings.endPos.real),
+                "END_Y": _fmtNum(settings.endPos.imag)
             }
             if settings.showPenPos:
                 canvasMin = settings.canvasOffset
-                replace["EXTRUDER_OFFSET"] = f"{settings.penOffset.real}x{settings.penOffset.imag}"
+                replace["EXTRUDER_OFFSET"] = f"{_fmtNum(settings.penOffset.real)}x{_fmtNum(settings.penOffset.imag)}"
             else:
                 canvasMin = settings.canvasOffset - settings.penOffset
                 replace["EXTRUDER_OFFSET"] = "0x2" # 0x2 is the default offset in bambu studio

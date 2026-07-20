@@ -91,7 +91,7 @@
 M201 X20000 Y20000 Z500 E5000 ; hard accel limits
 M203 X500 Y500 Z20 E30 ; hard speed limits
 M204 P20000 R5000 T20000 ; initial accel
-M205 X9.00 Y9.00 Z3.00 E2.50 ; max jerk
+M205 X9 Y9 Z3 E2.50 ; max jerk
 
 ; FEATURE: Custom
 M710 A1 S255 ;turn on MC fan
@@ -107,7 +107,7 @@ G90 ; abs pos
 M17 X1.2 Y1.2 Z0.75 ; reset motor current to default
 M220 S100 ; reset feedrate
 M221 S0 ; disable e-axis
-M73.2 R1.0 ; reset time left magnitude
+M73.2 R1 ; reset time left magnitude
 M1002 set_gcode_claim_speed_level : 5
 G29.1 Z0 ; clear z-trim value
 G29.2 S0; disable ABL
