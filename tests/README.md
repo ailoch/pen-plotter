@@ -12,7 +12,7 @@ Status tags used in the SVG comments:
 | `[OK]` | parsed and drawn today |
 | `[WARN]` | parsed but prints a warning (e.g. text) |
 | `[DROP]` | element type not handled → silently ignored |
-| `[PARTIAL]` | drawn, but some attribute is ignored (e.g. stroke width/joins/caps, rounded-rect corners) |
+| `[PARTIAL]` | drawn, but some attribute is ignored (e.g. stroke width/joins/caps) |
 
 ## `comprehensive.svg`
 
@@ -24,7 +24,7 @@ each split into subgroups:
 
 | Group | Covers |
 |-------|--------|
-| `basic-shapes` | rect (filled), rounded-rect `[PARTIAL]`, circle, ellipse, `<line>`/`<polyline>`/`<polygon>` `[DROP]`, arc + rotated-ellipse arc, quadratic/cubic bezier, shorthand path commands (`h`/`v`/`t`), text-as-path (converted) `[OK]`, and a raw live `<text>` `[WARN]` |
+| `basic-shapes` | rect (filled), rounded-rect (including corners) `[OK]`, circle, ellipse, `<line>`/`<polyline>`/`<polygon>` `[OK]`, `<use>` `[DROP]`, arc + rotated-ellipse arc, quadratic/cubic bezier, shorthand path commands (`h`/`v`/`t`), text-as-path (converted) `[OK]`, and a raw live `<text>` `[WARN]` |
 | `transforms` | translate, non-uniform scale, rotate-about-point, skewX, skewY, raw matrix, negative-scale mirror, transform on an arc, group-inherited transform — all on one reference "F" glyph |
 | `fill` | evenodd/nonzero donuts, open filled path, 2 & 3 regions, nested subpaths, degenerate single line, self-intersecting figure-eight |
 | `fill-gapfill` | acute wedge, tapering slot, region below `infillSpacing`, thin sliver, concentric circle — the cases `_gapFill` exists to handle |

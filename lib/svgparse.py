@@ -25,26 +25,7 @@ def readStyle(element: svgelements.SVGElement) -> Style:
 
 def parseSvgElement(node: svgelements.SVGElement, docTransform: Transform, document: Document, textNames: list[str]):
     nodeTransform = docTransform @ Transform(getattr(node, "transform", None))
-    if isinstance(node, svgelements.Rect):
-        temp = PathObject(str(node.id)) # str() to make pylance happy
-        temp.style = readStyle(node)
-        temp.transform = nodeTransform
-
-        x = cast(float, node.x) # cast() tells linters the correct type without affecting runtime
-        y = cast(float, node.y)
-        width = cast(float, node.width)
-        height = cast(float, node.height)
-
-        xmin = x
-        xmax = x + width
-        ymin = y * 1j
-        ymax = (y + height) * 1j
-        temp += Line(xmin+ymin, xmin+ymax)
-        temp += Line(xmin+ymax, xmax+ymax)
-        temp += Line(xmax+ymax, xmax+ymin)
-        temp += Line(xmax+ymin, xmin+ymin)
-        document.add(temp)
-    elif isinstance(node, (svgelements.Circle, svgelements.Ellipse)):
+    if isinstance(node, (svgelements.Circle, svgelements.Ellipse)):
         temp = PathObject(str(node.id)) # str() to make pylance happy
         temp.style = readStyle(node)
         temp.transform = nodeTransform
@@ -54,10 +35,14 @@ def parseSvgElement(node: svgelements.SVGElement, docTransform: Transform, docum
         rx = cast(float, node.rx)
         ry = cast(float, node.ry)
 
+        # NOT built via segments() like the branch above: segments() decomposes a
+        # circle/ellipse into 4 quarter-Arcs + a closing Line, whereas a single
+        # Arc (default sweep=2*pi) already represents the whole shape exactly -
+        # unifying would trade one segment for five with no feature gained
         center = cx + cy*1j
         temp += Arc(center, rx, ry * 1j)
         document.add(temp)
-    elif isinstance(node, svgelements.Path):
+    elif isinstance(node, (svgelements.Rect, svgelements.Path, svgelements.SimpleLine, svgelements.Polyline, svgelements.Polygon)):
         temp = PathObject(str(node.id)) # str() to make pylance happy
         temp.style = readStyle(node)
         temp.transform = nodeTransform
@@ -67,12 +52,17 @@ def parseSvgElement(node: svgelements.SVGElement, docTransform: Transform, docum
         start = None
         currentSegments: list[Segment] = []
 
-        # finalize supath when segments are collected
+        # finalize subpath when segments are collected
         def finalizeSubpath():
             if currentSegments:
                 temp.geometry.append(Path(currentSegments.copy()))
 
-        for part in node:
+        # all five of Rect/Path/SimpleLine/Polyline/Polygon expose segments() in
+        # this same Move/Line/Arc/QuadraticBezier/CubicBezier/Close vocabulary.
+        # transformed=False because each element's own transform is already
+        # folded into nodeTransform/temp.transform above - baking it in here too
+        # would apply it twice.
+        for part in node.segments(transformed=False):
             if isinstance(part, svgelements.Move):
                 finalizeSubpath()
                 currentSegments = []
@@ -117,7 +107,7 @@ def parseSvgElement(node: svgelements.SVGElement, docTransform: Transform, docum
             else:
                 print(f"Unknown path element: {type(part)} (part of {node.id})")
         finalizeSubpath()
-        if temp.geometry: # skip paths with no drawable segments (e.g. d="" or only Move commands) -
+        if temp.geometry: # skip degenerate/empty shapes (e.g. d="", coincident line endpoints) -
             document.add(temp) # nothing to draw, and an empty Path would crash later in the pipeline
     elif isinstance(node, svgelements.Group):
         for child in node:
