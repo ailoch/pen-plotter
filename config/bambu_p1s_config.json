@@ -9,7 +9,9 @@
         "safeZoneOffset": [0, 13], // offset of the safe zone's lower-left corner from the origin, in pen space
 
         "canvasSize": [217, 243], // size of the paper/drawable surface - change this to change the paper size
-        "canvasOffset": [0, 13] // offset of the canvas's (draw zone's) lower-left corner from the origin, in pen space
+        "canvasOffset": [0, 13], // offset of the canvas's (draw zone's) lower-left corner from the origin, in pen space
+
+        "maxVerticalSpeed": 10 // mm/s - max speed the printer's Z axis can move; the router assumes the slower of this and the travel speed when costing a travel's pen lift/lower time
     },
 
     // controls how the pen moves while drawing

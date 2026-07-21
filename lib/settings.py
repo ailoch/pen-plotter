@@ -39,6 +39,8 @@ class Settings:
     canvasSize: complex = 150+150j # size of the paper/drawable surface
     canvasOffset: complex = 0 # offset from origin of the canvas's lower-left corner, in pen space
 
+    maxVerticalSpeed: float = 600 # mm/min - most printers' Z axis is slower than X/Y, so the router assumes min(speeds[travel], maxVerticalSpeed) when costing a travel's pen lift/lower
+
     # motion settings
     heights: dict[LineType, float] = field(default_factory=lambda: {LineType.PERIMETER: 0, LineType.INFILL: 0, LineType.GAP_INFILL: 0, LineType.TRAVEL: 10})
     speeds: dict[LineType, float] = field(default_factory=lambda: {LineType.TRAVEL: 3000})
@@ -192,6 +194,8 @@ class Settings:
                             print(f"Wrong type for setting {sectionName}.segmentTypes: expected a list of strings")
                             continue
                         self.segmentTypes = tuple(setting)
+                    case "maxVerticalSpeed":
+                        self.maxVerticalSpeed = setting * 60 # mm/s -> mm/min
                     case "style":
                         allowedStyles = ("role", "instruction", "segment")
                         if setting.lower() in allowedStyles:
