@@ -130,6 +130,10 @@ class Settings:
             print(f"Failed to parse settings file '{path}': {str(cause).splitlines()[0]}. Using default settings.")
             return
 
+        if not isinstance(data, dict) or not all(isinstance(section, dict) for section in data.values()):
+            print(f"Settings file '{path}' must be a JSON object of objects (sections containing settings). Using default settings.")
+            return
+
         allowed = {f.name for f in fields(self)}
         # some settings are stored with different types than in the json
         specialTypeSettings = {"startPos", "penOffset", "plateSize", "safeZoneSize", "safeZoneOffset", "canvasSize", "canvasOffset", "endPos", "instructionTypes", "segmentTypes"}
