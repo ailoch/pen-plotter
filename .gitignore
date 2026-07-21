@@ -2,6 +2,6 @@
 *.svg
 *.tmp
 !testDrawing.svg
-!invalid.svg
 !gcode_templates/*.gcode
+!tests/*.svg
 __pycache__/

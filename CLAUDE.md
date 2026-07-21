@@ -98,3 +98,4 @@ Set `debug.profiling: true` in the config file to run under `cProfile` and print
 - `typings/pyclipper/__init__.pyi` — type stubs for pyclipper
 - `gcode_templates/bambu_p1s_{prefix,suffix}.gcode` — gcode templates referenced by the config's `prefixFile`/`suffixFile`; named per-printer like the config files
 - `*.svg` — test drawings (`horse.svg` multi-subpath; `testDrawing.svg` tests fill rules)
+- `tests/` — further test SVGs: `comprehensive.svg` (one file, grouped by feature area — basic shapes, transforms, fill, stroke, structure/misc, degenerate cases — every element `id`-named for what it tests, since the parser echoes that `id` when it drops/warns on an element), `viewport-*.svg` (minimal fixtures for each `promptRescale` branch), and `invalid.svg` (malformed XML, for `SvgParseError`); see `tests/README.md` for the full map

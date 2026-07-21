@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Viewport test: viewBox aspect ratio does NOT match the canvas (wide/short here).
+  Width matches testDrawing.svg's width (215.89999); height is arbitrary since
+  the whole point of this fixture is an aspect-ratio mismatch.
+  Expected: promptRescale prints the full 4-option prompt:
+    "Keep as-is (k), fit width (x), fit height (y), or stretch to fill both axes (b)?"
+      - k -> unscaled (1,1)
+      - x -> uniform scale by canvasWidth/svgWidth
+      - y -> uniform scale by canvasHeight/svgHeight
+      - b -> non-uniform (scaleX != scaleY); the border rect becomes a stretched
+             rectangle exactly filling the canvas (good visual check of anisotropic scale)
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="215.89999mm" height="100mm" viewBox="0 0 215.89999 100">
+  <rect x="0" y="0" width="215.89999" height="100" fill="none" stroke="black" stroke-width="0.5"/>
+  <rect x="4" y="4" width="30" height="12" fill="black"/>
+  <line x1="0" y1="0" x2="40" y2="20" stroke="black" stroke-width="0.5"/>
+</svg>

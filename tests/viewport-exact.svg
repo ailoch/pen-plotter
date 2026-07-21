@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Viewport test: viewBox matches testDrawing.svg's size (215.89999 x 230 mm) -
+  the intended canvasSize once config/bambu_p1s_config.json is updated to
+  match (not yet done, so this currently DOES trigger a rescale prompt against
+  the still-217x243 canvasSize).
+  Once canvasSize is updated: promptRescale returns (1,1) with NO prompt at all.
+  The border rect should land exactly on the canvas edges; the corner marker
+  (small filled square) sits at SVG-min corner (x=0,y=0), which after the Y-flip
+  becomes the TOP-LEFT of the plate. Use it to confirm orientation/centering.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="215.89999mm" height="230mm" viewBox="0 0 215.89999 230">
+  <!-- border spanning the exact viewBox bounds (outline only) -->
+  <rect x="0" y="0" width="215.89999" height="230" fill="none" stroke="black" stroke-width="0.5"/>
+  <!-- asymmetric orientation marker at the SVG-min corner (-> top-left of plate) -->
+  <rect x="4" y="4" width="20" height="10" fill="black"/>
+  <!-- diagonal so a mirror flip is obvious -->
+  <line x1="0" y1="0" x2="40" y2="40" stroke="black" stroke-width="0.5"/>
+</svg>

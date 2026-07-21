@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Viewport test: viewBox has a NON-ZERO origin (min-x=-30, min-y=-20) but the same
+  215.89999 x 230 size as testDrawing.svg (the intended canvasSize, once
+  config/bambu_p1s_config.json is updated to match).
+  Expected: no rescale prompt (size matches), but the parser must honor the viewBox
+  origin offset. The drawing is centered on the canvas regardless of origin, so the
+  border rect (which spans the full viewBox) should still land on the canvas edges;
+  the marker should stay at the SVG-min corner. If the origin is mishandled, the
+  content will be shifted by (30,20).
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="215.89999mm" height="230mm" viewBox="-30 -20 215.89999 230">
+  <rect x="-30" y="-20" width="215.89999" height="230" fill="none" stroke="black" stroke-width="0.5"/>
+  <rect x="-26" y="-16" width="20" height="10" fill="black"/>
+  <line x1="-30" y1="-20" x2="10" y2="20" stroke="black" stroke-width="0.5"/>
+</svg>

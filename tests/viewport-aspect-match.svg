@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Viewport test: viewBox is 2x testDrawing.svg's size (431.79998 x 460) but the
+  SAME aspect ratio.
+  Expected: promptRescale detects fitWidth == fitHeight and collapses the prompt to
+  "Keep drawing as-is (k), or rescale to fit the canvas (b)?".
+    - answer k -> drawing kept at 2x, so it overflows the canvas (bounds warning territory)
+    - answer b -> uniformly scaled by 0.5 to exactly fill the canvas
+  The border rect spans the full viewBox; after a 'b' rescale it should match the
+  canvas edges just like viewport-exact.svg.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="431.79998mm" height="460mm" viewBox="0 0 431.79998 460">
+  <rect x="0" y="0" width="431.79998" height="460" fill="none" stroke="black" stroke-width="1"/>
+  <rect x="8" y="8" width="40" height="20" fill="black"/>
+  <line x1="0" y1="0" x2="80" y2="80" stroke="black" stroke-width="1"/>
+</svg>

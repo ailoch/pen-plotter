@@ -1,0 +1,648 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!--
+  ============================================================================
+  COMPREHENSIVE PARSER / PIPELINE TEST DRAWING
+  ============================================================================
+  viewBox matches testDrawing.svg's size (215.89999 x 230 mm) rather than the
+  currently-configured canvasSize (217 x 243) - canvasSize is expected to be
+  updated to match testDrawing at some point, at which point this stops
+  triggering a rescale prompt too. Organized into top-level <g> groups (one per
+  feature area), each translated into its own horizontal band and split into
+  subgroups.
+
+  Every element has an id naming WHAT IT TESTS - not whether the parser
+  currently handles it (status belongs in the comments below, since it can
+  change). That id is also what the parser prints for a dropped element
+  ("Ignored <type> with name <id>") or the text warning, so a dropped case is
+  still self-identifying in the console output.
+
+  Status tags in comments:
+    [OK]      parsed and drawn today
+    [WARN]    parsed but prints a warning (e.g. text)
+    [DROP]    element type not handled -> silently ignored ("Ignored <type>")
+    [PARTIAL] drawn, but some attribute is ignored (e.g. stroke width/joins/caps,
+              rounded-rect corners) - future work
+
+  Fill note: readStyle() treats every element as filled black UNLESS fill="none".
+  So "outlined" cases MUST set fill="none"; "filled" cases may omit fill.
+  Stroke note: the plotter draws the CENTERLINE of a stroked path. stroke-width,
+  joins, caps, dashes and markers are all currently cosmetic/ignored [PARTIAL].
+
+  See README.md in this directory for the full group map.
+  ============================================================================
+-->
+
+<svg
+   width="215.89999mm"
+   height="230mm"
+   viewBox="0 0 215.89999 230"
+   fill="none"
+   stroke="black"
+   stroke-width="0.3"
+   version="1.1"
+   id="svg5"
+   sodipodi:docname="comprehensive.svg"
+   inkscape:version="1.4.4 (dcaf3e7, 2026-05-05)"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg">
+  <sodipodi:namedview
+     id="namedview5"
+     pagecolor="#ffffff"
+     bordercolor="#000000"
+     borderopacity="0.25"
+     inkscape:showpageshadow="2"
+     inkscape:pageopacity="0.0"
+     inkscape:pagecheckerboard="0"
+     inkscape:deskcolor="#d1d1d1"
+     inkscape:document-units="mm"
+     inkscape:zoom="1.7511215"
+     inkscape:cx="327.78994"
+     inkscape:cy="216.71826"
+     inkscape:window-width="3440"
+     inkscape:window-height="1369"
+     inkscape:window-x="1912"
+     inkscape:window-y="-8"
+     inkscape:window-maximized="1"
+     inkscape:current-layer="basic-shapes" />
+  <rect
+     id="reference-border"
+     x="0.5"
+     y="0.5"
+     width="214.9"
+     height="229"
+     fill="none"
+     stroke="black"
+     stroke-width="0.25" />
+  <!-- ======================================================================
+       BAND 1: BASIC SHAPES  (local y 0..38)
+       ====================================================================== -->
+  <g
+     id="basic-shapes"
+     transform="translate(4,4)">
+    <g
+       id="basic-primitives">
+      <rect
+         id="rect-filled"
+         x="0"
+         y="0"
+         width="16"
+         height="16"
+         fill="black"
+         stroke="none" />
+      <rect
+         id="rounded-rect-corners-ignored"
+         x="22"
+         y="0"
+         width="16"
+         height="16"
+         rx="4"
+         ry="4"
+         fill="none"
+         stroke="black" />
+      <circle
+         id="circle-filled"
+         cx="52"
+         cy="8"
+         r="8"
+         fill="black"
+         stroke="none" />
+      <ellipse
+         id="ellipse-outlined"
+         cx="78"
+         cy="8"
+         rx="10"
+         ry="6"
+         fill="none"
+         stroke="black" />
+      <line
+         id="line-element"
+         x1="96"
+         y1="0"
+         x2="110"
+         y2="16"
+         stroke="black" />
+      <polyline
+         id="polyline-element"
+         points="116,16 122,0 128,16 134,0 140,16"
+         fill="none"
+         stroke="black" />
+      <polygon
+         id="polygon-element"
+         points="150,0 162,4 158,16 146,12"
+         fill="black"
+         stroke="none" />
+    </g>
+    <g
+       id="basic-curves">
+      <path
+         id="arc-command-sweep"
+         d="M168,16 A8,8 0 0 1 184,16"
+         fill="none"
+         stroke="black" />
+      <path
+         id="arc-rotated-ellipse"
+         d="M190,16 A10,5 40 0 1 205,10"
+         fill="none"
+         stroke="black" />
+      <path
+         id="quadratic-bezier"
+         d="M0,34 Q10,20 20,34"
+         fill="none"
+         stroke="black" />
+      <path
+         id="cubic-bezier-s-curve"
+         d="M26,34 C32,20 40,48 46,34"
+         fill="none"
+         stroke="black" />
+      <path
+         id="path-shorthand-h-v-t"
+         d="M54,34 h12 v-10 q6,10 12,0 t12,0"
+         fill="none"
+         stroke="black" />
+    </g>
+    <g
+       id="text">
+      <!-- [OK] "Abc" converted via Inkscape Path > Object to Path - the real
+           "text as path" test: outlines the parser draws like any other path. -->
+      <path
+         d="m 126.03809,34 h -0.92725 l -0.6416,-1.82373 h -2.83008 L 120.99756,34 h -0.8833 l 2.38183,-6.543457 h 1.16016 z m -1.83692,-2.570801 -1.14697,-3.212402 -1.15137,3.212402 z m 7.08399,0.0791 q 0,0.615234 -0.17579,1.107422 -0.17138,0.492187 -0.46582,0.826172 -0.31201,0.347167 -0.68554,0.522949 -0.37354,0.171386 -0.82178,0.171386 -0.41748,0 -0.72949,-0.101074 -0.31201,-0.09668 -0.61524,-0.263672 L 127.73877,34 h -0.77344 v -6.837891 h 0.82617 v 2.44336 q 0.34717,-0.285645 0.73829,-0.465821 0.39111,-0.18457 0.8789,-0.18457 0.87012,0 1.3711,0.667969 0.50537,0.667969 0.50537,1.885254 z m -0.85254,0.02197 q 0,-0.878906 -0.29004,-1.331543 -0.29004,-0.457031 -0.93604,-0.457031 -0.36035,0 -0.72949,0.158203 -0.36914,0.153809 -0.68555,0.399903 v 2.8125 q 0.35157,0.158203 0.60205,0.219726 0.25489,0.06152 0.57569,0.06152 0.68555,0 1.07226,-0.448243 0.39112,-0.452636 0.39112,-1.415039 z m 5.77002,2.16211 Q 135.78955,33.890137 135.41602,34 q -0.36915,0.109863 -0.78663,0.109863 -0.53173,0 -0.97558,-0.153808 -0.44385,-0.158203 -0.76026,-0.47461 -0.3208,-0.316406 -0.49658,-0.799804 -0.17578,-0.483399 -0.17578,-1.129395 0,-1.204101 0.65918,-1.889648 0.66358,-0.685547 1.74902,-0.685547 0.42188,0 0.82618,0.118652 0.40869,0.118652 0.74707,0.290039 v 0.918457 h -0.0439 q -0.37793,-0.294433 -0.78223,-0.452637 -0.3999,-0.158203 -0.78222,-0.158203 -0.70313,0 -1.11182,0.47461 -0.4043,0.470215 -0.4043,1.384277 0,0.887695 0.39551,1.366699 0.39991,0.47461 1.12061,0.47461 0.25049,0 0.50976,-0.06592 0.25928,-0.06592 0.46582,-0.171387 0.18018,-0.09228 0.33838,-0.193359 0.15821,-0.105469 0.25049,-0.180176 h 0.0439 z"
+         id="text-object-as-path"
+         style="font-size:9px;fill:#000000;stroke:none"
+         aria-label="Abc" />
+      <!-- [WARN] a raw, unconverted <text> element left as-is - tests that the
+           parser detects and rejects live text (prints the "does not support
+           text" warning naming this id, and omits it from the gcode). Do NOT
+           convert this one to a path. -->
+      <text
+         id="text-raw"
+         x="145"
+         y="34"
+         style="font-size:9px;font-family:sans-serif;fill:#000000;stroke:none">Xyz</text>
+    </g>
+  </g>
+  <!-- ======================================================================
+       BAND 2: TRANSFORMS  (band origin y=52)
+       Each case transforms the SAME reference "F" glyph so orientation is
+       obvious. Glyph is inlined (not <use>) because <use> is [DROP].
+       Glyph local bounds ~ 0..7 x, 0..14 y.
+       ====================================================================== -->
+  <g
+     id="transforms"
+     transform="translate(4,52)">
+    <path
+       id="transform-reference-none"
+       d="M0,0 L0,14 L7,14 L7,12 L2,12 L2,8 L5,8 L5,6 L2,6 L2,0 Z"
+       fill="black"
+       stroke="none" />
+    <path
+       id="transform-translate"
+       transform="translate(16,0)"
+       d="M0,0 L0,14 L7,14 L7,12 L2,12 L2,8 L5,8 L5,6 L2,6 L2,0 Z"
+       fill="black"
+       stroke="none" />
+    <path
+       id="transform-scale-nonuniform"
+       transform="translate(30,0) scale(1.6,1)"
+       d="M0,0 L0,14 L7,14 L7,12 L2,12 L2,8 L5,8 L5,6 L2,6 L2,0 Z"
+       fill="none"
+       stroke="black" />
+    <path
+       id="transform-rotate-about-point"
+       transform="translate(56,0) rotate(30,3,7)"
+       d="M0,0 L0,14 L7,14 L7,12 L2,12 L2,8 L5,8 L5,6 L2,6 L2,0 Z"
+       fill="black"
+       stroke="none" />
+    <path
+       id="transform-skewx-shear"
+       transform="translate(78,0) skewX(20)"
+       d="M0,0 L0,14 L7,14 L7,12 L2,12 L2,8 L5,8 L5,6 L2,6 L2,0 Z"
+       fill="none"
+       stroke="black" />
+    <path
+       id="transform-skewy-shear"
+       transform="translate(100,0) skewY(15)"
+       d="M0,0 L0,14 L7,14 L7,12 L2,12 L2,8 L5,8 L5,6 L2,6 L2,0 Z"
+       fill="none"
+       stroke="black" />
+    <path
+       id="transform-matrix-raw"
+       transform="translate(118,0) matrix(1,0.2,0.2,1,0,0)"
+       d="M0,0 L0,14 L7,14 L7,12 L2,12 L2,8 L5,8 L5,6 L2,6 L2,0 Z"
+       fill="black"
+       stroke="none" />
+    <path
+       id="transform-negative-scale-mirror"
+       transform="translate(150,0) scale(-1,1)"
+       d="M0,0 L0,14 L7,14 L7,12 L2,12 L2,8 L5,8 L5,6 L2,6 L2,0 Z"
+       fill="none"
+       stroke="black" />
+    <path
+       id="transform-on-arc"
+       transform="translate(158,0) rotate(20)"
+       d="M0,7 A5,5 0 1 1 0,7.01"
+       fill="none"
+       stroke="black" />
+    <g
+       id="transform-group-inherited"
+       transform="translate(180,0) scale(1.2)">
+      <path
+         id="transform-group-child-rotate"
+         transform="rotate(15)"
+         d="M0,0 L0,14 L7,14 L7,12 L2,12 L2,8 L5,8 L5,6 L2,6 L2,0 Z"
+         fill="black"
+         stroke="none" />
+    </g>
+  </g>
+  <!-- ======================================================================
+       BAND 3: FILL  (band origin y=76) - edge cases; basics covered above.
+       ====================================================================== -->
+  <g
+     id="fill"
+     transform="translate(4,76)">
+    <path
+       id="fill-evenodd-donut"
+       fill-rule="evenodd"
+       fill="black"
+       stroke="none"
+       d="M0,0 h20 v20 h-20 Z M6,6 h8 v8 h-8 Z" />
+    <path
+       id="fill-nonzero-donut"
+       fill-rule="nonzero"
+       fill="black"
+       stroke="none"
+       d="M26,0 h20 v20 h-20 Z M32,6 v8 h8 v-8 Z" />
+    <path
+       id="fill-open-path"
+       fill="black"
+       stroke="none"
+       d="M52,0 L72,0 L72,20 L52,20" />
+    <path
+       id="fill-two-regions"
+       fill="black"
+       stroke="none"
+       d="M78,0 h8 v20 h-8 Z M90,0 h8 v20 h-8 Z" />
+    <path
+       id="fill-three-regions"
+       fill="black"
+       stroke="none"
+       d="M104,0 h5 v20 h-5 Z M112,0 h5 v20 h-5 Z M120,0 h5 v20 h-5 Z" />
+    <path
+       id="fill-nested-subpaths"
+       fill-rule="evenodd"
+       fill="black"
+       stroke="none"
+       d="M130,0 h24 v20 h-24 Z M134,4 h16 v12 h-16 Z M138,8 h8 v4 h-8 Z" />
+    <path
+       id="fill-single-line-degenerate"
+       fill="black"
+       stroke="black"
+       d="M160,0 L180,10"
+       style="stroke:#000000;stroke-opacity:1" />
+    <path
+       id="fill-figure-eight-selfintersect"
+       fill-rule="evenodd"
+       fill="black"
+       stroke="none"
+       d="M186,0 L206,20 L206,0 L186,20 Z" />
+  </g>
+  <!-- ======================================================================
+       BAND 3b: FILL - infill/gap-fill stress cases  (band origin y=106)
+       These specifically exercise _gapFill (acute wedges + thin slivers).
+       ====================================================================== -->
+  <g
+     id="fill-gapfill"
+     transform="translate(4,106)">
+    <path
+       id="gapfill-acute-wedge"
+       fill="black"
+       stroke="none"
+       d="M0,0 L40,2 L0,4 Z" />
+    <path
+       id="gapfill-tapering-slot"
+       fill="black"
+       stroke="none"
+       d="M44,0 L84,0 L84,1 L48,3 L84,5 L84,6 L44,6 Z" />
+    <rect
+       id="gapfill-below-infill-spacing"
+       x="90"
+       y="0"
+       width="0.5"
+       height="6"
+       fill="black"
+       stroke="none" />
+    <rect
+       id="gapfill-thin-sliver"
+       x="96"
+       y="0"
+       width="60"
+       height="0.9"
+       fill="black"
+       stroke="none" />
+    <circle
+       id="gapfill-concentric-circle"
+       cx="176"
+       cy="6"
+       r="6"
+       fill="black"
+       stroke="none" />
+  </g>
+  <!-- ======================================================================
+       BAND 4: STROKE  (band origin y=122). stroke styling is [PARTIAL] today
+       (centerline only). Cases pin geometry + stage future stroke expansion.
+       ====================================================================== -->
+  <!-- Cases use <path> (not <line>/<polyline>) so the centerline geometry draws
+       TODAY; the styling attributes below (width/dash/cap/join/marker) are still
+       ignored [PARTIAL] but are staged for when we add real stroke expansion.
+       (Native <line>/<polyline> drop-behavior is covered in basic-primitives.) -->
+  <g
+     id="stroke"
+     transform="translate(4,122)"
+     fill="none"
+     stroke="black">
+    <path
+       id="stroke-width-thin"
+       d="M0,0 L0,16"
+       stroke-width="0.2" />
+    <path
+       id="stroke-width-medium"
+       d="M6,0 L6,16"
+       stroke-width="1" />
+    <path
+       id="stroke-width-thick"
+       d="M12,0 L12,16"
+       stroke-width="2.5" />
+    <path
+       id="stroke-zigzag"
+       d="M20,0 L24,16 L28,0 L32,16 L36,0" />
+    <path
+       id="stroke-multiple-subpaths"
+       d="M44,0 v16 M50,0 v16 M56,0 v16" />
+    <path
+       id="stroke-self-intersecting"
+       d="M64,0 L80,16 M64,16 L80,0" />
+    <path
+       id="stroke-dash-basic"
+       d="M88,0 L88,16"
+       stroke-dasharray="2 2" />
+    <path
+       id="stroke-dash-complex-pattern"
+       d="M94,0 L94,16"
+       stroke-dasharray="4 1 1 1" />
+    <path
+       id="stroke-dash-offset"
+       d="M100,0 L100,16"
+       stroke-dasharray="2 2"
+       stroke-dashoffset="1" />
+    <!-- joins need a thick, acute-angled V to actually show bevel/round/miter
+         differences - the ambient 0.3mm width made them visually identical -->
+    <g
+       id="stroke-joins"
+       transform="translate(0,20)"
+       stroke-width="4">
+      <path
+         id="stroke-join-bevel"
+         d="M3,18 L6,0 L9,18"
+         stroke-linejoin="bevel" />
+      <path
+         id="stroke-join-round"
+         d="M33,18 L36,0 L39,18"
+         stroke-linejoin="round" />
+      <path
+         id="stroke-join-miter-tight-limit"
+         d="M63,18 L66,0 L69,18"
+         stroke-linejoin="miter"
+         stroke-miterlimit="1.5" />
+      <path
+         id="stroke-join-miter-loose-limit"
+         d="M93,18 L96,0 L99,18"
+         stroke-linejoin="miter"
+         stroke-miterlimit="10" />
+    </g>
+    <g
+       id="stroke-caps-and-markers"
+       transform="translate(0,40)">
+      <path
+         id="stroke-cap-butt"
+         d="M160,2 L160,14"
+         stroke-width="2"
+         stroke-linecap="butt" />
+      <path
+         id="stroke-cap-round"
+         d="M166,2 L166,14"
+         stroke-width="2"
+         stroke-linecap="round" />
+      <path
+         id="stroke-cap-square"
+         d="M172,2 L172,14"
+         stroke-width="2"
+         stroke-linecap="square" />
+      <path
+         id="stroke-markers-start-mid-end"
+         d="M182,14 L190,2 L198,14 L206,2"
+         marker-start="url(#mk)"
+         marker-mid="url(#mk)"
+         marker-end="url(#mk)" />
+    </g>
+  </g>
+  <!-- ======================================================================
+       BAND 5: STRUCTURE / MISC  (band origin y=188)
+       ====================================================================== -->
+  <g
+     id="structure-misc"
+     transform="translate(4,188)">
+    <g
+       id="nested-groups-inherit-fill"
+       fill="black"
+       stroke="none">
+      <g
+         transform="translate(0,0)"
+         id="g2">
+        <g
+           transform="translate(2,2)"
+           id="g1">
+          <rect
+             id="nested-groups-leaf-rect"
+             x="0"
+             y="0"
+             width="12"
+             height="12" />
+        </g>
+      </g>
+    </g>
+    <g
+       id="inherit-fill-from-parent"
+       fill="black">
+      <rect
+         id="inherit-fill-applied"
+         x="20"
+         y="0"
+         width="12"
+         height="12"
+         stroke="none" />
+      <rect
+         id="inherit-fill-overridden-to-none"
+         x="36"
+         y="0"
+         width="12"
+         height="12"
+         fill="none"
+         stroke="black" />
+    </g>
+    <use
+       id="use-symbol"
+       href="#reusable-symbol"
+       x="54"
+       y="0" />
+    <rect
+       id="clippath-ignored"
+       x="72"
+       y="0"
+       width="16"
+       height="16"
+       clip-path="url(#clip)"
+       fill="black"
+       stroke="none" />
+    <rect
+       id="mask-ignored"
+       x="92"
+       y="0"
+       width="16"
+       height="16"
+       mask="url(#mask)"
+       fill="black"
+       stroke="none" />
+    <rect
+       id="pattern-fill-ignored"
+       x="112"
+       y="0"
+       width="16"
+       height="16"
+       fill="url(#pat)"
+       stroke="black" />
+    <rect
+       id="display-none-not-drawn"
+       x="132"
+       y="0"
+       width="16"
+       height="16"
+       display="none"
+       fill="#000000" />
+    <rect
+       id="visibility-hidden-not-drawn"
+       x="152"
+       y="0"
+       width="16"
+       height="16"
+       visibility="hidden"
+       fill="black" />
+    <rect
+       id="opacity-ignored"
+       x="172"
+       y="0"
+       width="16"
+       height="16"
+       fill="black"
+       fill-opacity="0.3"
+       stroke="none" />
+  </g>
+  <!-- ======================================================================
+       BAND 6: DEGENERATE / ROBUSTNESS  (band origin y=214)
+       Should never crash the pipeline; most produce nothing.
+       NOTE: empty/degenerate paths currently CRASH routing (known bug, to fix).
+       ====================================================================== -->
+  <g
+     id="degenerate"
+     transform="translate(4,214)">
+    <path
+       id="degenerate-zero-length-line"
+       d="M0,0 L0,0"
+       stroke="black" />
+    <circle
+       id="degenerate-zero-radius-circle"
+       cx="8"
+       cy="4"
+       r="0"
+       fill="black" />
+    <path
+       id="degenerate-empty-path"
+       d=""
+       stroke="black" />
+    <path
+       id="degenerate-coincident-points"
+       d="M16,0 L16,0 L28,0 L28,8 L28,8 Z"
+       fill="none"
+       stroke="black" />
+    <rect
+       id="degenerate-off-canvas"
+       x="120"
+       y="-8"
+       width="120"
+       height="20"
+       fill="none"
+       stroke="black" />
+  </g>
+  <!-- ======================================================================
+       DEFS - referenced by structure-misc + stroke markers.
+       ====================================================================== -->
+  <defs
+     id="defs5">
+    <symbol
+       id="reusable-symbol">
+      <rect
+         x="0"
+         y="0"
+         width="12"
+         height="12"
+         fill="black"
+         stroke="none"
+         id="rect2" />
+    </symbol>
+    <marker
+       id="mk"
+       markerWidth="4"
+       markerHeight="4"
+       refX="2"
+       refY="2">
+      <circle
+         cx="2"
+         cy="2"
+         r="1.5"
+         fill="black"
+         id="circle2" />
+    </marker>
+    <clipPath
+       id="clip">
+      <rect
+         x="72"
+         y="0"
+         width="8"
+         height="16"
+         id="rect3" />
+    </clipPath>
+    <mask
+       id="mask">
+      <rect
+         x="92"
+         y="0"
+         width="8"
+         height="16"
+         fill="white"
+         id="rect4" />
+    </mask>
+    <pattern
+       id="pat"
+       width="4"
+       height="4"
+       patternUnits="userSpaceOnUse">
+      <rect
+         x="0"
+         y="0"
+         width="2"
+         height="2"
+         fill="black"
+         id="rect5" />
+    </pattern>
+  </defs>
+</svg>
