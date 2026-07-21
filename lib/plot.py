@@ -19,6 +19,7 @@ class _DrawState:
     lastMoveType: str = ""
     lastSpeed: float = 0
     lastAccel: float = 0
+    lastLineType: LineType | None = None # role of the most recent draw move, for shortTravelThresholds' min-of-both-roles check
 
 def _moveRect(state: _DrawState, settings: Settings, bounds: tuple[float, float, float, float], file: TextIO, lineType: LineType | None = None):
     edges: tuple[complex, complex, complex, complex] = (bounds[0], bounds[1]*1j, bounds[2], bounds[3]*1j)
@@ -114,7 +115,12 @@ def _penMove(state: _DrawState, settings: Settings, pos: complex, file: TextIO, 
     distSquared = (pos.real - state.pos["X"]) ** 2 + (pos.imag - state.pos["Y"]) ** 2
     if distSquared >= .000001: # moves shorter than .001 mm are probably caused by rounding errors
         if travel:
-            if distSquared >= settings.shortTravelThreshold ** 2: # long travel
+            # a travel move between two different draw roles must satisfy both roles'
+            # thresholds - use whichever is smaller
+            threshold = settings.shortTravelThresholds[lineType or LineType.PERIMETER]
+            if state.lastLineType is not None:
+                threshold = min(threshold, settings.shortTravelThresholds[state.lastLineType])
+            if distSquared >= threshold ** 2: # long travel
                 _addLine(state, settings, {"G": "1", "Z": settings.heights[LineType.TRAVEL]}, file, LineType.TRAVEL)
                 _addLine(state, settings, {"G": "1", "X": str(pos.real), "Y": str(pos.imag)}, file)
                 _setDrawHeight(state, settings, file, lineType, raised)
@@ -123,6 +129,7 @@ def _penMove(state: _DrawState, settings: Settings, pos: complex, file: TextIO, 
         else: # draw moves
             _setDrawHeight(state, settings, file, lineType, raised)
             _addLine(state, settings, {"G": "1", "X": str(pos.real), "Y": str(pos.imag), "E": math.hypot(pos.real-state.pos["X"], pos.imag-state.pos["Y"])}, file, lineType or LineType.PERIMETER)
+            state.lastLineType = lineType or LineType.PERIMETER
 
 def _addPath(state: _DrawState, settings: Settings, object: PathObject, file: TextIO, raised: bool = False):
     for path in object.geometry:
@@ -141,6 +148,7 @@ def _addPath(state: _DrawState, settings: Settings, object: PathObject, file: Te
                 if segment.sweep < 0:
                     params["G"] = "3"
                 _addLine(state, settings, params, file, lineType)
+                state.lastLineType = lineType or LineType.PERIMETER
             else:
                 print(f"Unknown path type {type(segment)}")
     if settings.showBoundingBoxes:

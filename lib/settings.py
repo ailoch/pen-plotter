@@ -43,7 +43,7 @@ class Settings:
     heights: dict[LineType, float] = field(default_factory=lambda: {LineType.PERIMETER: 0, LineType.INFILL: 0, LineType.GAP_INFILL: 0, LineType.TRAVEL: 10})
     speeds: dict[LineType, float] = field(default_factory=lambda: {LineType.TRAVEL: 3000})
     accels: dict[LineType, float] = field(default_factory=lambda: {LineType.TRAVEL: 1000})
-    shortTravelThreshold: float = .5
+    shortTravelThresholds: dict[LineType, float] = field(default_factory=lambda: {LineType.PERIMETER: .5, LineType.INFILL: .5, LineType.GAP_INFILL: .5})
     loadDelay: float = 20
 
     # processing settings
@@ -150,7 +150,7 @@ class Settings:
                 setting = cast(Any, setting)
 
                 match settingName: # some properties need special logic
-                    case "heights" | "speeds" | "accels" | "lineTypes":
+                    case "heights" | "speeds" | "accels" | "lineTypes" | "shortTravelThresholds":
                         temp = {}
                         # "draw" sets all three draw roles (perimeter/infill/gapInfill) at
                         # once; an explicit role key below overrides it for that role

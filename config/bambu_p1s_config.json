@@ -14,11 +14,11 @@
 
     // controls how the pen moves while drawing
     "motion": {
-        // line types: draw (controls all drawing line types), "perimeter", "infill", "gap infill", "travel"
+        // line types: draw (controls all drawing line types, can be overridden), "perimeter", "infill", "gapInfill", "travel"
         "heights": {"draw": 2, "travel": 3.5, "_segmentBounds": 2.1, "_pathBounds": 2.2, "_documentBounds": 2.3}, // mm
         "speeds": {"draw": 30, "travel": 250}, // mm/s
         "accels": {"draw": 3000, "travel": 15000}, // mm/s^2
-        "shortTravelThreshold": 0.5, // travel moves below this distance will not lift the pen
+        "shortTravelThresholds": {"draw": 0.5, "infill": 1, "gapInfill": 1}, // travel moves below this distance (mm) will not lift the pen; a travel between two different roles uses the smaller of the two thresholds
         "loadDelay": 3 // wait this long for user to load pen
     },
 
