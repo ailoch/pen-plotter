@@ -158,18 +158,35 @@ def _promptRescale(svgWidth: float, svgHeight: float, canvasSize: complex) -> tu
             return fitWidth, fitHeight
         return 1.0, 1.0
 
-def parseSvg(svgPath: str, settings: Settings) -> Document:
-    document = Document()
+# loads and parses the SVG file into an svgelements tree, re-raising any parse
+# error as SvgParseError. Separate from parseSvg so the caller can load (and
+# validate) the file, then ask the interactive rescale question, before starting
+# the timer/profiler that only measures the computational parse below.
+def loadSvg(svgPath: str) -> svgelements.SVG:
     try:
         svg = svgelements.SVG.parse(svgPath)
     except Exception as e:
         raise SvgParseError(f"Failed to parse SVG file '{svgPath}' ({e})") from e
+    if svg.viewbox is None:
+        raise SvgParseError(f"SVG file '{svgPath}' has no viewBox attribute; this converter requires one to determine the drawing's size")
+    return svg
+
+# asks the user how to reconcile the SVG viewport with the canvas (see _promptRescale).
+# interactive, so kept out of parseSvg's timed/profiled body.
+def promptRescale(svg: svgelements.SVG, settings: Settings) -> tuple[float, float]:
+    assert svg.viewbox is not None # loadSvg already validated this
+    svgWidth = cast(float, svg.viewbox.width)
+    svgHeight = cast(float, svg.viewbox.height)
+    return _promptRescale(svgWidth, svgHeight, settings.canvasSize)
+
+def parseSvg(svg: svgelements.SVG, settings: Settings, scaleX: float, scaleY: float) -> Document:
+    assert svg.viewbox is not None # loadSvg already validated this
+    document = Document()
     transform = Transform()
-    transform.scale(svg.viewbox.height / svg.height) # undo svgelements trying to scale document to viewport
+    transform.scale(cast(float, svg.viewbox.height) / cast(float, svg.height)) # undo svgelements trying to scale document to viewport
 
     svgWidth = cast(float, svg.viewbox.width)
     svgHeight = cast(float, svg.viewbox.height)
-    scaleX, scaleY = _promptRescale(svgWidth, svgHeight, settings.canvasSize)
 
     textNames: list[str] = []
     for child in svg:

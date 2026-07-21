@@ -271,10 +271,16 @@ def createFile(geom: Document, settings: Settings, fileOut: str) -> bool:
     state = _DrawState(pos=dict(settings.startPos)) # copy - state.pos is mutated per-move, startPos must not be
     # write to a temp file in the same directory and only swap it in on success,
     # so a failure partway through won't truncate/corrupt a pre-existing fileOut
-    tempPath = None
+    outDir = os.path.dirname(os.path.abspath(fileOut)) or "."
     try:
-        outDir = os.path.dirname(os.path.abspath(fileOut)) or "."
         fd, tempPath = tempfile.mkstemp(dir=outDir, suffix=".tmp")
+    except (FileNotFoundError, PermissionError):
+        # a temp-file path inside outDir means nothing to the user, who only typed
+        # fileOut - report that instead, whether outDir doesn't exist or isn't writable
+        print(f'Could not open file "{fileOut}". The directory may not exist or may not be writable.')
+        return False
+
+    try:
         with os.fdopen(fd, "w") as destFile:
             replace: dict[str, float | str] = {
                 "TRAVEL_HEIGHT": settings.heights[LineType.TRAVEL],
@@ -320,7 +326,11 @@ def createFile(geom: Document, settings: Settings, fileOut: str) -> bool:
         badFile = fileOut if e.filename == tempPath else e.filename
         print(f'Could not open file "{badFile}". Another program might be editing it.')
     except FileNotFoundError as e:
-        print(f'Could not find file "{e.filename}".')
+        # os.replace(tempPath, fileOut) reports its src (tempPath) as e.filename
+        # even when the real problem is outDir having vanished mid-write - show
+        # fileOut instead so the message points at a path the user recognizes
+        badFile = fileOut if e.filename == tempPath else e.filename
+        print(f'Could not find file "{badFile}".')
     finally:
         if tempPath and os.path.exists(tempPath):
             os.remove(tempPath)
