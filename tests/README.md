@@ -30,7 +30,7 @@ each split into subgroups:
 | `fill-gapfill` | acute wedge, tapering slot, region below `infillSpacing`, thin sliver, concentric circle — the cases `_gapFill` exists to handle |
 | `stroke` | varying widths, zigzag, multiple subpaths, self-intersection, dashes (pattern + offset), joins (bevel/round/miter + miterlimit, thickened to 4mm on an acute-angled V so the join shapes actually differ), caps (butt/round/square), markers. All `<path>` so the **centerline draws today**; styling is `[PARTIAL]` |
 | `structure-misc` | nested groups, fill inheritance + override, `<use>`/`<symbol>` `[DROP]`, clipPath/mask/pattern `[PARTIAL]`, `display:none` & `visibility:hidden` ⚠️ *drawn anyway — see Known gaps*, opacity `[PARTIAL]` |
-| `degenerate` | zero-length line, zero-radius circle, empty path, coincident points, off-canvas rect |
+| `degenerate` | zero-length line, zero-radius circle, empty path (dropped - nothing to draw or route), coincident points, off-canvas rect |
 
 ### Text
 `text-object-as-path` is `<text>` converted via Inkscape's **Path → Object to
@@ -42,17 +42,8 @@ convert this one.
 
 ### Known gaps surfaced by these fixtures
 Not fixed here — each documented in its own SVG comment, to be picked up as
-separate follow-up commits alongside the routing crash fix:
+separate follow-up commits:
 
-- **Empty/degenerate path crashes routing.** `degenerate-empty-path` (`d=""`)
-  becomes a `PathObject` holding an empty `Path`; `route.py`'s `start()` calls
-  `segments[0].point(0)` → `IndexError`. `comprehensive.svg` won't complete
-  end-to-end until this is fixed — parse-only checks still work:
-  ```sh
-  py -3 -c "from lib.svgparse import loadSvg, parseSvg; from lib.settings import Settings; \
-  s=Settings(); s.initFromJson('config/bambu_p1s_config.json'); \
-  parseSvg(loadSvg('tests/comprehensive.svg'), s, 1.0, 1.0)"
-  ```
 - **`display:none`/`visibility:hidden` are drawn anyway.** Neither attribute is
   checked anywhere in `lib/svgparse.py` — this is a real gap in the converter,
   not an SVG spec issue or an Inkscape bug (a real browser correctly resolves

@@ -117,9 +117,8 @@ def parseSvgElement(node: svgelements.SVGElement, docTransform: Transform, docum
             else:
                 print(f"Unknown path element: {type(part)} (part of {node.id})")
         finalizeSubpath()
-        if not temp.geometry: # check for empty paths
-            temp.geometry = [Path()]
-        document.add(temp)
+        if temp.geometry: # skip paths with no drawable segments (e.g. d="" or only Move commands) -
+            document.add(temp) # nothing to draw, and an empty Path would crash later in the pipeline
     elif isinstance(node, svgelements.Group):
         for child in node:
             parseSvgElement(child, docTransform, document, textNames)

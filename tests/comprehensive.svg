@@ -550,7 +550,6 @@
   <!-- ======================================================================
        BAND 6: DEGENERATE / ROBUSTNESS  (band origin y=214)
        Should never crash the pipeline; most produce nothing.
-       NOTE: empty/degenerate paths currently CRASH routing (known bug, to fix).
        ====================================================================== -->
   <g
      id="degenerate"
