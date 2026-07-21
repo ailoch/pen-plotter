@@ -51,9 +51,6 @@ separate follow-up commits:
   view has a known history of not honoring `visibility` the same way it honors
   `display:none`, but that's an editor-display quirk separate from what our
   parser does with the parsed attribute).
-- **Negative-size viewBox is silently corrupted, not rejected.** See
-  `viewport-negative-size.svg` below.
-
 ## Viewport fixtures
 
 Minimal SVGs, each just a border rect spanning the viewBox edges plus an
@@ -70,7 +67,7 @@ currently trigger a rescale prompt too until `canvasSize` is updated to match.
 | `viewport-aspect-match.svg` | 2× size, same aspect (431.79998×460) | collapsed: keep (`k`) vs rescale-to-fit (`b`) |
 | `viewport-aspect-mismatch.svg` | different aspect (width matches, height 100 arbitrary) | full: keep / fit-width / fit-height / stretch |
 | `viewport-nonzero-origin.svg` | same size, origin (−30,−20) | none; tests viewBox-origin handling |
-| `viewport-negative-size.svg` | negative width/height (`0 0 -215.89999 -230`) | ⚠️ none — should be rejected like a missing viewBox, but isn't (see Known gaps above) |
+| `viewport-negative-size.svg` | negative width/height (`0 0 -215.89999 -230`) | `SvgParseError` — rejected like a missing viewBox |
 
 The corner marker sits at the SVG-min corner (min-x, min-y), which after the
 pipeline's Y-flip lands at the **top-left of the plate** — use it to confirm the

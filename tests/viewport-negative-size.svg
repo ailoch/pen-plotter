@@ -5,21 +5,11 @@
   Per the SVG spec this is a document error - a conforming processor should
   treat the document as in error (comparable to a missing viewBox).
 
-  Current behavior (svgelements + this converter): NOT rejected. loadSvg only
-  checks `svg.viewbox is None`, so a negative-size viewBox passes through.
-  svgelements stores the negative values as-is (viewbox.width/height come back
-  negative), and parseSvg's `transform.scale(viewbox.height / svg.height)` -
-  meant to undo svgelements' auto-scale-to-viewport - divides by a negative
-  number, silently producing a corrupted (wrong-scale, wrong-position) but NOT
-  crashing transform. Confirmed via:
-    py -3 -c "from lib.svgparse import loadSvg, parseSvg; from lib.settings import Settings; \
-    s=Settings(); s.initFromJson('config/bambu_p1s_config.json'); \
-    print(parseSvg(loadSvg('tests/viewport-negative-size.svg'), s, 1.0, 1.0).bounds())"
-  -> geometry lands far outside where it should, with no error printed.
-
-  Known gap (like the empty-path routing crash) - not fixed here. The fix
-  belongs in loadSvg: reject viewbox.width <= 0 or viewbox.height <= 0 the
-  same way a missing viewbox is rejected today.
+  Expected: loadSvg raises SvgParseError (svgelements itself stores negative
+  viewbox.width/height as-is without rejecting them, so this converter checks
+  for <= 0 explicitly, the same way it checks for a missing viewBox). Confirmed
+  via:
+    py -3 -c "from lib.svgparse import loadSvg; loadSvg('tests/viewport-negative-size.svg')"
 -->
 <svg xmlns="http://www.w3.org/2000/svg" width="215.89999mm" height="230mm" viewBox="0 0 -215.89999 -230">
   <rect x="0" y="0" width="215.89999" height="230" fill="none" stroke="black" stroke-width="0.5"/>

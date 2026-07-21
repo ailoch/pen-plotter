@@ -168,6 +168,8 @@ def loadSvg(svgPath: str) -> svgelements.SVG:
         raise SvgParseError(f"Failed to parse SVG file '{svgPath}' ({e})") from e
     if svg.viewbox is None:
         raise SvgParseError(f"SVG file '{svgPath}' has no viewBox attribute; this converter requires one to determine the drawing's size")
+    if cast(float, svg.viewbox.width) <= 0 or cast(float, svg.viewbox.height) <= 0:
+        raise SvgParseError(f"SVG file '{svgPath}' has a non-positive viewBox width/height ({svg.viewbox}); per the SVG spec this is an error")
     return svg
 
 # asks the user how to reconcile the SVG viewport with the canvas (see _promptRescale).
