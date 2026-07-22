@@ -1,4 +1,4 @@
-import math, os, tempfile
+import ast, math, operator, os, re, tempfile
 from dataclasses import dataclass
 from typing import TextIO
 
@@ -30,12 +30,72 @@ def _moveRect(state: _DrawState, settings: Settings, bounds: tuple[float, float,
     _penMove(state, settings, edges[2]+edges[1], file, False, lineType)
     _penMove(state, settings, edges[0]+edges[1], file, False, lineType)
 
-# adds the contents of srcFile to the end of destFile
+# matches a single {...} template block; the inner text is an arithmetic expression
+# evaluated against the replace dict, so {TRAVEL_SPEED/2} and {TRAVEL_HEIGHT + 10}
+# work, not just a bare {TRAVEL_SPEED}
+_TEMPLATE_BLOCK = re.compile(r"\{([^{}]+)\}")
+
+# binary/unary operators permitted in a {...} block. NOTE the deliberate absence of a
+# power operator (ast.Pow): it's the one arithmetic op that turns a short expression
+# into unbounded work (2**9999999999 pins CPU/RAM), and the template's use cases only
+# need +-*/. everything not listed is rejected below.
+_TEMPLATE_BINOPS = {
+    ast.Add: operator.add,
+    ast.Sub: operator.sub,
+    ast.Mult: operator.mul,
+    ast.Div: operator.truediv,
+    ast.FloorDiv: operator.floordiv,
+    ast.Mod: operator.mod,
+}
+_TEMPLATE_UNARYOPS = {ast.UAdd: operator.pos, ast.USub: operator.neg}
+
+# ensure v is int/float; raises otherwise
+def _requireNumber(v):
+    if isinstance(v, bool) or not isinstance(v, (int, float)):
+        raise TypeError(f"expected a number, got {type(v).__name__}")
+    return v
+
+# evaluates one parsed expression node against the replace namespace, allowing ONLY
+# variable names (looked up in replace), numeric literals, and the arithmetic operators
+# above.
+def _evalTemplateNode(node: ast.AST, replace: dict[str, str | float]):
+    if isinstance(node, ast.Expression):
+        return _evalTemplateNode(node.body, replace)
+    if isinstance(node, ast.Constant):
+        if isinstance(node.value, (int, float)) and not isinstance(node.value, bool):
+            return node.value
+        raise ValueError(f"disallowed literal {node.value!r}")
+    if isinstance(node, ast.Name):
+        if node.id in replace:
+            return replace[node.id]
+        raise NameError(f"name '{node.id}' is not defined")
+    if isinstance(node, ast.BinOp) and type(node.op) in _TEMPLATE_BINOPS:
+        left = _requireNumber(_evalTemplateNode(node.left, replace))
+        right = _requireNumber(_evalTemplateNode(node.right, replace))
+        return _TEMPLATE_BINOPS[type(node.op)](left, right)
+    if isinstance(node, ast.UnaryOp) and type(node.op) in _TEMPLATE_UNARYOPS:
+        return _TEMPLATE_UNARYOPS[type(node.op)](_requireNumber(_evalTemplateNode(node.operand, replace)))
+    raise ValueError(f"disallowed expression element {type(node).__name__}")
+
+# using eval() here would allow executing arbitrary python code from an input file
+# parsing the ast like this guards against arbitrary code execution
+# on failure, original {...} text is left untouched and a warning is printed
+def _evalTemplateBlock(expr: str, replace: dict[str, str | float]) -> str:
+    try:
+        result = _evalTemplateNode(ast.parse(expr, mode="eval"), replace)
+    except Exception as e:
+        print(f"Warning: could not evaluate gcode template expression '{{{expr}}}' ({e}); leaving it as-is")
+        return "{" + expr + "}"
+    if isinstance(result, (int, float)):
+        return _fmtNum(result)
+    return str(result)
+
+# adds the contents of srcFile to the end of destFile, substituting {...} expression
+# blocks (see _evalTemplateBlock)
 def _fileAppend(srcFile: TextIO, destFile: TextIO, replace: dict[str, str | float] = {}):
     for line in srcFile:
-        if "{" in line: # this saves time because the following check is much slower and most lines don't need it
-            for k, v in replace.items():
-                line = line.replace("{" + k + "}", str(v))
+        if "{" in line: # this saves time because the regex sub below is slower and most lines don't need it
+            line = _TEMPLATE_BLOCK.sub(lambda m: _evalTemplateBlock(m.group(1), replace), line)
         destFile.write(line)
 
 # adds a gcode line to the file with the specified arguments
@@ -296,8 +356,8 @@ def createFile(geom: Document, settings: Settings, fileOut: str) -> bool:
                 "TRAVEL_ACCEL": settings.accels[LineType.TRAVEL],
                 "LINE_WIDTH": settings.penWidth,
                 "LOAD_DELAY": settings.loadDelay,
-                "END_X": _fmtNum(settings.endPos.real),
-                "END_Y": _fmtNum(settings.endPos.imag)
+                "END_X": settings.endPos.real,
+                "END_Y": settings.endPos.imag
             }
             if settings.showPenPos:
                 canvasMin = settings.canvasOffset

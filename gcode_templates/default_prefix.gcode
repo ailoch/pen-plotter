@@ -8,7 +8,7 @@ M140 S0 ; disable plate heating
 G28 ; home
 
 M204 S{TRAVEL_ACCEL}
-G1 Z15 F{TRAVEL_SPEED}; move to safe pos
+G1 Z{TRAVEL_HEIGHT + 15} F{TRAVEL_SPEED}; move to safe pos
 G1 X75 Y75
 ; allow pen to be loaded
 G4 S{LOAD_DELAY}
