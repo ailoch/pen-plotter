@@ -8,18 +8,59 @@ from lib.settings import Settings
 class SvgParseError(Exception):
     pass
 
+_VALID_LINEJOINS = ("miter", "round", "bevel")
+_VALID_LINECAPS = ("butt", "round", "square")
+
 def readStyle(element: svgelements.SVGElement) -> Style:
-    # svgelements resolves inherited/cascaded presentation attributes (fill, fill-rule)
-    # into this raw values dict, so this works the same whether the attribute is set
-    # directly on the element or inherited from a parent (e.g. horse.svg's root <svg
-    # fill="#000000">)
+    # svgelements resolves inherited/cascaded presentation attributes (fill, fill-rule,
+    # stroke-linejoin, etc.) into this raw values dict, so this works the same whether
+    # the attribute is set directly on the element or inherited from a parent
     values = getattr(element, "values", {})
+
+    # element.stroke is a resolved svgelements Color; .value is None for both an
+    # unset stroke and an explicit stroke="none" (SVG's default is "none" anyway, so
+    # treating both the same matches spec)
+    stroke = getattr(element, "stroke", None)
+    strokeColor = None if stroke is None or stroke.value is None else [0, 0, 0]
+
+    linejoin = values.get("stroke-linejoin", "miter")
+    if linejoin not in _VALID_LINEJOINS:
+        linejoin = "miter"
+
+    linecap = values.get("stroke-linecap", "butt")
+    if linecap not in _VALID_LINECAPS:
+        linecap = "butt"
+
+    miterlimit = 4.0
+    rawMiterlimit = values.get("stroke-miterlimit")
+    if rawMiterlimit is not None:
+        try:
+            parsedMiterlimit = float(rawMiterlimit)
+            if parsedMiterlimit >= 1:
+                miterlimit = parsedMiterlimit
+        except ValueError:
+            pass
+
+    dasharray = None
+    rawDasharray = values.get("stroke-dasharray")
+    if rawDasharray and rawDasharray != "none":
+        try:
+            parsedDasharray = [float(v) for v in rawDasharray.replace(",", " ").split()]
+            if parsedDasharray and all(v >= 0 for v in parsedDasharray):
+                dasharray = parsedDasharray
+        except ValueError:
+            pass
+
     return Style(
         strokeWidth=getattr(element, "stroke_width", 1),
+        strokeColor=strokeColor,
+        linejoin=linejoin,
+        linecap=linecap,
+        miterlimit=miterlimit,
+        dasharray=dasharray,
         fillColor=None if values.get("fill") == "none" else [0, 0, 0],
         fillRule=values.get("fill-rule", "nonzero"),
         #TODO: implement color conversion (hex -> rgb)
-        #strokeColor=getattr(element, "stroke", [0, 0, 0]),
         #fillColor=getattr(element, "fill", [0, 0, 0])
     )
 

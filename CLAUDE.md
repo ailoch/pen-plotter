@@ -16,6 +16,8 @@ All logic lives in `lib/`, importable for testing (no module-level side effects)
 
 [`lib/geometry.py`](lib/geometry.py): `Segment` (Line/Arc/QuadraticBezier/CubicBezier) → `Path` (list of segments plus a `lineType: LineType`, a subpath) → `PathObject` (list of Path + Style + Transform). `Document` = list of PathObjects. `lineType` (from `lib/settings.py`'s `LineType` enum — `PERIMETER`/`INFILL`/`GAP_INFILL`/`TRAVEL`/bounds-debug values) tags which draw role a subpath belongs to; it lives on `Path` rather than `Style` because a single `PathObject` mixes roles (outline vs. infill loops vs. gap-fill strokes) once infill runs. Defaults to `PERIMETER`; `tessellate()` carries it through onto the returned `Path`.
 
+`Style` also carries stroke info: `strokeWidth`, `strokeColor` (`None` means no stroke — the SVG default), `linejoin`/`linecap`/`miterlimit`, and `dasharray` (`None` means solid; parsed but not yet consumed — dash generation is future work). `strokeWidth`/`dasharray` are in SVG user units at parse time; `PathObject.applyTransformations()` scales both by `sqrt(|det|)` of the applied transform's 2x2 part (the uniform-scale equivalent — a single width/length can't represent true non-uniform scaling) at the same time it transforms the segments, so they stay correct after the printer-space transform is applied.
+
 Key: `Path.point(t)` spans whole subpath (0 ≤ t ≤ 1), `isClosed()`, `isFillable()` (encloses area, used to gate infill — separate from closed state), `tessellate(tolerance, allowArcs)` reduces to Line/Arc within tolerance, `rotateTo(index)` re-anchors closed paths (for routing).
 
 ## Key Pipeline Stages

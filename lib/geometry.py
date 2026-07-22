@@ -9,7 +9,12 @@ from lib.settings import LineType
 @dataclass
 class Style:
     strokeWidth: float = 1
-    strokeColor: list[int] = field(default_factory=lambda: [0, 0, 0])
+    # none means no stroke (the SVG default)
+    strokeColor: list[int] | None = None
+    linejoin: str = "miter" # "miter" | "round" | "bevel"
+    linecap: str = "butt" # "butt" | "round" | "square"
+    miterlimit: float = 4 # SVG default
+    dasharray: list[float] | None = None #TODO: dash generation
     # none means no fill
     fillColor: list[int] | None = field(default_factory=lambda: [0, 0, 0])
     fillRule: str = "nonzero" # SVG default; the other valid value is "evenodd"
@@ -810,6 +815,17 @@ class PathObject:
         for path in self.geometry:
             for segment in path.segments:
                 segment.applyTransform(self.transform)
+
+        # stroke-width (and dash lengths) are in user units, so they need to scale
+        # with the transform same as the geometry does. sqrt(|det|) of the 2x2 part
+        # is the uniform-scale equivalent of a possibly non-uniform transform - a
+        # single width/length can't represent true non-uniform stroke scaling anyway
+        m = self.transform.matrix
+        scale = abs(m[0]*m[3] - m[1]*m[2]) ** 0.5
+        self.style.strokeWidth *= scale
+        if self.style.dasharray is not None:
+            self.style.dasharray = [d * scale for d in self.style.dasharray]
+
         self.transform = Transform() # reset transformation
 
     def start(self) -> complex:
