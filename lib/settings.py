@@ -50,6 +50,7 @@ class Settings:
     accels: dict[LineType, float] = field(default_factory=lambda: {LineType.TRAVEL: 1000})
     shortTravelThresholds: dict[LineType, float] = field(default_factory=lambda: {LineType.STROKE: .5, LineType.INFILL: .5, LineType.GAP_INFILL: .5})
     loadDelay: float = 20
+    eAxisMultiplier: float = 1.0 # scales every emitted E value - works around P1S firmware throttling XY speed to the E-axis limits based on the raw commanded E, ignoring M221 S0 (see bug.gcode); side effect: the slicer's total-filament stat scales down by the same factor
 
     # processing settings
     tessellationTolerance: float = .012
@@ -109,6 +110,8 @@ class Settings:
         self._validateBounds()
         if self.generateGapInfill and self.fillSpacing <= 0:
             print("Warning: generateGapInfill is enabled but infill is disabled; gap infill will have no effect")
+        if self.eAxisMultiplier <= 0:
+            print("Warning: eAxisMultiplier <= 0 drops the E value from every draw move; the slicer will render the whole drawing as travel moves")
 
     def initFromJson(self, path):
         try:

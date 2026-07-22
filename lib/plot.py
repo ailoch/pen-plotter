@@ -188,7 +188,7 @@ def _penMove(state: _DrawState, settings: Settings, pos: complex, file: TextIO, 
                 _addLine(state, settings, {"G": "1", "X": str(pos.real), "Y": str(pos.imag)}, file, lineType or LineType.STROKE)
         else: # draw moves
             _setDrawHeight(state, settings, file, lineType, raised)
-            _addLine(state, settings, {"G": "1", "X": str(pos.real), "Y": str(pos.imag), "E": math.hypot(pos.real-state.pos["X"], pos.imag-state.pos["Y"])}, file, lineType or LineType.STROKE)
+            _addLine(state, settings, {"G": "1", "X": str(pos.real), "Y": str(pos.imag), "E": math.hypot(pos.real-state.pos["X"], pos.imag-state.pos["Y"]) * settings.eAxisMultiplier}, file, lineType or LineType.STROKE)
             state.lastLineType = lineType or LineType.STROKE
 
 def _addPath(state: _DrawState, settings: Settings, object: PathObject, file: TextIO, raised: bool = False):
@@ -207,7 +207,7 @@ def _addPath(state: _DrawState, settings: Settings, object: PathObject, file: Te
                 _setDrawHeight(state, settings, file, lineType, raised)
                 centerOffset = segment.center - segment.point(0)
                 end = segment.point(1)
-                params = {"G": "2", "X": end.real, "Y": end.imag, "I": centerOffset.real, "J": centerOffset.imag, "E": segment.length()}
+                params = {"G": "2", "X": end.real, "Y": end.imag, "I": centerOffset.real, "J": centerOffset.imag, "E": segment.length() * settings.eAxisMultiplier}
                 if segment.sweep < 0:
                     params["G"] = "3"
                 _addLine(state, settings, params, file, lineType)
