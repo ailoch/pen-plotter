@@ -193,7 +193,10 @@ def _penMove(state: _DrawState, settings: Settings, pos: complex, file: TextIO, 
 
 def _addPath(state: _DrawState, settings: Settings, object: PathObject, file: TextIO, raised: bool = False):
     for path in object.geometry:
-        lineType = path.lineType
+        # RAW_GEOMETRY has no height/speed/accel of its own (it's a source for
+        # stroke/fill generation, not a drawn role) - temporarily draw it as
+        # PERIMETER until stroke generation replaces it with real STROKE passes
+        lineType = LineType.PERIMETER if path.lineType == LineType.RAW_GEOMETRY else path.lineType
         tessellated = path.tessellate(settings.tessellationTolerance)
         for segment in tessellated.segments:
             if isinstance(segment, Line):

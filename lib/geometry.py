@@ -459,7 +459,7 @@ class CubicBezier(Segment):
 @dataclass
 class Path:
     segments: list[Segment] = field(default_factory=list)
-    lineType: LineType = LineType.PERIMETER
+    lineType: LineType = LineType.RAW_GEOMETRY
 
     def length(self) -> float:
         len = 0

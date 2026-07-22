@@ -4,6 +4,7 @@ from dataclasses import dataclass, field, fields
 import commentjson
 
 class LineType(Enum):
+    RAW_GEOMETRY = auto() # raw geometry from input file. Never drawn, so does not need height/speed/accel of its own.
     PERIMETER = auto()
     INFILL = auto()
     GAP_INFILL = auto()
