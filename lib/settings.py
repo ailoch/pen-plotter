@@ -16,6 +16,20 @@ class LineType(Enum):
 # the three draw roles that "draw" (in heights/speeds/accels/lineTypes) expands to
 _DRAW_LINE_TYPES = (LineType.STROKE, LineType.INFILL, LineType.GAP_INFILL)
 
+# valid safeZoneAlignment/canvasAlignment values - first char is vertical (Bottom/Top),
+# second is horizontal (Left/Right), naming the plate corner the *Offset is measured from
+_ALIGNMENTS = ("BL", "BR", "TL", "TR")
+
+# converts an alignment + "distance towards center from that corner" offset into the
+# equivalent lower-left-corner offset (the representation the rest of the pipeline uses,
+# and what a "BL" alignment already *is* - so BL is a no-op here, preserving old behavior)
+def _alignedOffset(alignment: str, offset: complex, rectSize: complex, containerSize: complex) -> complex:
+    left = alignment[1] == "L"
+    bottom = alignment[0] == "B"
+    x = offset.real if left else containerSize.real - offset.real - rectSize.real
+    y = offset.imag if bottom else containerSize.imag - offset.imag - rectSize.imag
+    return complex(x, y)
+
 # maps settings.json's move-type keys (heights/speeds/accels/lineTypes) to their LineType
 _LINE_TYPE_KEYS = {
     "stroke": LineType.STROKE,
@@ -36,13 +50,13 @@ class Settings:
     plateSize: complex = 150+150j # plate rect size; lower-left corner fixed at origin
     safeZoneSize: complex = 150+150j # size of the area the pen can reach without colliding
     safeZoneOffset: complex = 0 # offset from origin of the safe zone's lower-left corner, in pen space
+    safeZoneAlignment: str = "BL" # which plate corner safeZoneOffset is measured from ("BL"/"BR"/"TL"/"TR") - see Alignment & Scaling in CLAUDE.md
 
     canvasSize: complex = 150+150j # size of the paper/drawable surface
     canvasOffset: complex = 0 # offset from origin of the canvas's lower-left corner, in pen space
+    canvasAlignment: str = "BL" # which plate corner canvasOffset is measured from ("BL"/"BR"/"TL"/"TR") - see Alignment & Scaling in CLAUDE.md
 
     maxVerticalSpeed: float = 600 # mm/min - most printers' Z axis is slower than X/Y, so the router assumes min(speeds[travel], maxVerticalSpeed) when costing a travel's pen lift/lower
-
-    generateStroke: bool = True # if false, strokes draw as a single centerline pass regardless of strokeWidth (the pre-multi-pass behavior) instead of expanding to multiple passes
 
     # motion settings
     heights: dict[LineType, float] = field(default_factory=lambda: {LineType.STROKE: 0, LineType.INFILL: 0, LineType.GAP_INFILL: 0, LineType.TRAVEL: 10})
@@ -56,6 +70,7 @@ class Settings:
     tessellationTolerance: float = .012
     fillSpacing: float = .3 # distance between concentric fill loops (mm); <= 0 disables fill
     generateGapInfill: bool = True # if true, adds extra strokes to fill small gaps in the infill
+    generateStroke: bool = True # if false, strokes draw as a single centerline pass regardless of strokeWidth (the pre-multi-pass behavior) instead of expanding to multiple passes
 
     prefixFile: str = "gcode_templates/default_prefix.gcode"
     suffixFile: str = "gcode_templates/default_suffix.gcode"
@@ -202,6 +217,11 @@ class Settings:
                         self.segmentTypes = tuple(setting)
                     case "maxVerticalSpeed":
                         self.maxVerticalSpeed = setting * 60 # mm/s -> mm/min
+                    case "safeZoneAlignment" | "canvasAlignment":
+                        if setting.upper() in _ALIGNMENTS:
+                            setattr(self, settingName, setting.upper())
+                        else:
+                            print(f"Unknown alignment '{setting}' (reading {sectionName}.{settingName}); expected one of {_ALIGNMENTS}")
                     case "style":
                         allowedStyles = ("role", "instruction", "segment")
                         if setting.lower() in allowedStyles:
@@ -210,6 +230,13 @@ class Settings:
                             print(f"Unknown style '{setting}' (reading {sectionName}.style)")
                     case _:
                         setattr(self, settingName, setting)
+
+        # safeZoneOffset/canvasOffset are read as "distance towards center from the
+        # aligned plate corner" - convert to the lower-left-corner offset the rest of
+        # the pipeline expects, now that both the offset and alignment are known
+        self.safeZoneOffset = _alignedOffset(self.safeZoneAlignment, self.safeZoneOffset, self.safeZoneSize, self.plateSize)
+        self.canvasOffset = _alignedOffset(self.canvasAlignment, self.canvasOffset, self.canvasSize, self.plateSize)
+
         self._validate()
 
         print(f"Loaded settings from file '{path}'\n")
