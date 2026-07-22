@@ -164,7 +164,7 @@ def _addLine(state: _DrawState, settings: Settings, args: dict[str, str | float 
 # penMoves and by Arc draws, which (unlike Line draws) have no X/Y/Z move of their
 # own to piggyback a height change on since G2/G3 only carries the endpoint
 def _setDrawHeight(state: _DrawState, settings: Settings, file: TextIO, lineType: LineType | None = None, raised: bool = False):
-    newHeight = settings.heights[lineType or LineType.PERIMETER]
+    newHeight = settings.heights[lineType or LineType.STROKE]
     if raised:
         newHeight += .001
     if state.pos["Z"] != newHeight:
@@ -177,7 +177,7 @@ def _penMove(state: _DrawState, settings: Settings, pos: complex, file: TextIO, 
         if travel:
             # a travel move between two different draw roles must satisfy both roles'
             # thresholds - use whichever is smaller
-            threshold = settings.shortTravelThresholds[lineType or LineType.PERIMETER]
+            threshold = settings.shortTravelThresholds[lineType or LineType.STROKE]
             if state.lastLineType is not None:
                 threshold = min(threshold, settings.shortTravelThresholds[state.lastLineType])
             if distSquared >= threshold ** 2: # long travel
@@ -185,18 +185,18 @@ def _penMove(state: _DrawState, settings: Settings, pos: complex, file: TextIO, 
                 _addLine(state, settings, {"G": "1", "X": str(pos.real), "Y": str(pos.imag)}, file)
                 _setDrawHeight(state, settings, file, lineType, raised)
             else: # short travel
-                _addLine(state, settings, {"G": "1", "X": str(pos.real), "Y": str(pos.imag)}, file, lineType or LineType.PERIMETER)
+                _addLine(state, settings, {"G": "1", "X": str(pos.real), "Y": str(pos.imag)}, file, lineType or LineType.STROKE)
         else: # draw moves
             _setDrawHeight(state, settings, file, lineType, raised)
-            _addLine(state, settings, {"G": "1", "X": str(pos.real), "Y": str(pos.imag), "E": math.hypot(pos.real-state.pos["X"], pos.imag-state.pos["Y"])}, file, lineType or LineType.PERIMETER)
-            state.lastLineType = lineType or LineType.PERIMETER
+            _addLine(state, settings, {"G": "1", "X": str(pos.real), "Y": str(pos.imag), "E": math.hypot(pos.real-state.pos["X"], pos.imag-state.pos["Y"])}, file, lineType or LineType.STROKE)
+            state.lastLineType = lineType or LineType.STROKE
 
 def _addPath(state: _DrawState, settings: Settings, object: PathObject, file: TextIO, raised: bool = False):
     for path in object.geometry:
-        # RAW_GEOMETRY has no height/speed/accel of its own (it's a source for
-        # stroke/fill generation, not a drawn role) - temporarily draw it as
-        # PERIMETER until stroke generation replaces it with real STROKE passes
-        lineType = LineType.PERIMETER if path.lineType == LineType.RAW_GEOMETRY else path.lineType
+        # RAW_GEOMETRY is a source for stroke/fill generation, never drawn itself
+        if path.lineType == LineType.RAW_GEOMETRY:
+            continue
+        lineType = path.lineType
         tessellated = path.tessellate(settings.tessellationTolerance)
         for segment in tessellated.segments:
             if isinstance(segment, Line):
@@ -211,7 +211,7 @@ def _addPath(state: _DrawState, settings: Settings, object: PathObject, file: Te
                 if segment.sweep < 0:
                     params["G"] = "3"
                 _addLine(state, settings, params, file, lineType)
-                state.lastLineType = lineType or LineType.PERIMETER
+                state.lastLineType = lineType or LineType.STROKE
             else:
                 print(f"Unknown path type {type(segment)}")
     if settings.showBoundingBoxes:

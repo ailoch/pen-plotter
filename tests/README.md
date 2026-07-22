@@ -12,7 +12,7 @@ Status tags used in the SVG comments:
 | `[OK]` | parsed and drawn today |
 | `[WARN]` | parsed but prints a warning (e.g. text) |
 | `[DROP]` | element type not handled → silently ignored |
-| `[PARTIAL]` | drawn, but some attribute is ignored (e.g. stroke width/joins/caps) |
+| `[PARTIAL]` | drawn, but some attribute is ignored (e.g. stroke dashes/markers) |
 
 ## `comprehensive.svg`
 
@@ -26,9 +26,9 @@ each split into subgroups:
 |-------|--------|
 | `basic-shapes` | rect (filled), rounded-rect (including corners) `[OK]`, circle, ellipse, `<line>`/`<polyline>`/`<polygon>` `[OK]`, `<use>` `[DROP]`, arc + rotated-ellipse arc, quadratic/cubic bezier, shorthand path commands (`h`/`v`/`t`), text-as-path (converted) `[OK]`, and a raw live `<text>` `[WARN]` |
 | `transforms` | translate, non-uniform scale, rotate-about-point, skewX, skewY, raw matrix, negative-scale mirror, transform on an arc, group-inherited transform — all on one reference "F" glyph |
-| `fill` | evenodd/nonzero donuts, open filled path, 2 & 3 regions, nested subpaths, degenerate single line, self-intersecting figure-eight |
-| `fill-gapfill` | acute wedge, tapering slot, region below `infillSpacing`, thin sliver, concentric circle — the cases `_gapFill` exists to handle |
-| `stroke` | varying widths, zigzag, multiple subpaths, self-intersection, dashes (pattern + offset), joins (bevel/round/miter + miterlimit, thickened to 4mm on an acute-angled V so the join shapes actually differ), caps (butt/round/square), markers. All `<path>` so the **centerline draws today**; styling is `[PARTIAL]` |
+| `fill` | evenodd/nonzero donuts, open filled path, 2 & 3 regions, nested subpaths, degenerate single line, self-intersecting figure-eight ⚠️ *now draws nothing at all — see Known gaps* |
+| `fill-gapfill` | acute wedge, tapering slot, region below `fillSpacing`, thin sliver, concentric circle — the cases `_gapFill` exists to handle |
+| `stroke` | varying widths (thin/medium/thick), zigzag, multiple subpaths, self-intersection, dashes (pattern + offset) `[PARTIAL]`, joins (bevel/round/miter + miterlimit, thickened to 4mm on an acute-angled V so the join shapes actually differ) `[OK]`, caps (butt/round/square) `[OK]`, markers `[PARTIAL]`; a `stroke-expansion` subgroup covers a wide multi-pass closed stroke, combined stroke+fill (fill inset following the stroke's inner edge), a non-uniformly-transformed stroke width, and a stroke="none"+fill="none" shape that's dropped entirely. Real multi-pass generation via `lib/stroke.py` — width/joins/caps/miterlimit are `[OK]` |
 | `structure-misc` | nested groups, fill inheritance + override, `<use>`/`<symbol>` `[DROP]`, clipPath/mask/pattern `[PARTIAL]`, `display:none` & `visibility:hidden` ⚠️ *drawn anyway — see Known gaps*, opacity `[PARTIAL]` |
 | `degenerate` | zero-length line, zero-radius circle, empty path (dropped - nothing to draw or route), coincident points, off-canvas rect |
 
@@ -51,6 +51,14 @@ separate follow-up commits:
   view has a known history of not honoring `visibility` the same way it honors
   `display:none`, but that's an editor-display quirk separate from what our
   parser does with the parsed attribute).
+- **`fill-figure-eight-selfintersect` now draws nothing.** `Path.isFillable()`'s
+  plain shoelace area calculation is fill-rule-blind, so a self-intersecting
+  bowtie's two opposite-wound lobes cancel to ~zero net signed area and it's
+  judged unfillable — even though pyclipper's evenodd union (fill-rule-aware)
+  would resolve it into two real triangles if ever reached. Pre-dates stroke
+  generation; previously masked because every `RAW_GEOMETRY` subpath always got
+  an outline pass regardless of fillability, so *something* was visible even
+  though it was never actually filled.
 ## Viewport fixtures
 
 Minimal SVGs, each just a border rect spanning the viewBox edges plus an

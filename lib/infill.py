@@ -22,6 +22,13 @@ def _toClipperPath(points: list[complex]) -> list[tuple[int, int]]:
 def _fromClipperPath(path) -> list[complex]:
     return [complex(x / _SCALE, y / _SCALE) for x, y in path]
 
+# maps a Style.linejoin string to the corresponding pyclipper join type - shared by
+# the fill inset (so it follows a stroke's inner edge the same way the stroke itself
+# is drawn) and lib/stroke.py's own offsetting.
+def _joinType(linejoin: str):
+    assert pyclipper is not None # only called once pyclipper is known to be installed (see callers)
+    return {"round": pyclipper.JT_ROUND, "bevel": pyclipper.JT_SQUARE}.get(linejoin, pyclipper.JT_MITER) # default / "miter"
+
 # converts a clipper-int loop back to a closed, tessellated Path tagged with lineType,
 # and appends it to geometry - shared by the concentric and gap-fill loop passes
 def _appendLoop(geometry: list[Path], loopPts, lineType: LineType, tolerance: float):
@@ -47,13 +54,15 @@ def _offsetPolys(paths: list, delta: float, asTree: bool = False):
 # ORIGINAL polygons (not chained from the previous loop) so discretization drift can't
 # compound - each Execute recomputes fresh from the added paths, just with a larger
 # cumulative delta of firstDelta + spacing*k (k = 0, 1, 2, ...) until Execute comes
-# back empty (the interior is exhausted). spacing/firstDelta are in mm.
-def _concentricLoops(polygons: list, spacing: float, firstDelta: float, tolerance: float, objId: str) -> list:
+# back empty (the interior is exhausted). spacing/firstDelta are in mm. joinType
+# defaults to JT_ROUND; a stroked object's first inset instead passes the stroke's own
+# linejoin (see _joinType) so the fill follows the stroke's inner edge at corners.
+def _concentricLoops(polygons: list, spacing: float, firstDelta: float, tolerance: float, objId: str, joinType=None) -> list:
     if pyclipper is None:
         return []
     pco = pyclipper.PyclipperOffset()
     pco.ArcTolerance = _drawArcTolerance(tolerance)
-    pco.AddPaths(polygons, pyclipper.JT_ROUND, pyclipper.ET_CLOSEDPOLYGON)
+    pco.AddPaths(polygons, pyclipper.JT_ROUND if joinType is None else joinType, pyclipper.ET_CLOSEDPOLYGON)
 
     loops = []
     step = 0
@@ -181,10 +190,10 @@ def _gapFill(region: list, centerlines: list, spacing: float, tolerance: float, 
 # generates concentric infill loops for every PathObject with a set fill color,
 # appending them as new subpaths to object.geometry. runs in printer space (mm),
 # so must be called after parseSvg's transforms are applied.
-# settings.infillSpacing <= 0 disables the concentric loops but closing of
+# settings.fillSpacing <= 0 disables the concentric loops but closing of
 # fillable subpaths (see below) still happens
 def generateInfill(document: Document, settings: Settings):
-    spacing = settings.infillSpacing
+    spacing = settings.fillSpacing
     tolerance = settings.tessellationTolerance
     if spacing > 0 and pyclipper is None:
         print("Warning: pyclipper is not installed (pip install pyclipper); skipping infill generation")
@@ -230,15 +239,33 @@ def generateInfill(document: Document, settings: Settings):
         if not region:
             continue
 
-        # the drawn loops - offset inward from the resolved region at spacing intervals
-        loops = _concentricLoops(region, spacing, spacing, tolerance, str(obj.id))
+        # a stroked object's fill must stay clear of the stroke band (strokeWidth/2
+        # inset) instead of running to the raw boundary, and its first ring should
+        # follow the stroke's own linejoin at corners so it hugs the stroke's inner
+        # edge rather than the (possibly sharper) raw outline
+        hasStroke = obj.style.strokeColor is not None and obj.style.strokeWidth > 0
+        firstDelta = (obj.style.strokeWidth / 2 + spacing / 2) if hasStroke else spacing / 2
+        joinType = _joinType(obj.style.linejoin) if hasStroke else None
+
+        # the drawn loops - offset inward from the resolved region, first inset per
+        # firstDelta above, then at spacing intervals
+        loops = _concentricLoops(region, spacing, firstDelta, tolerance, str(obj.id), joinType)
         for loopPts in loops:
             _appendLoop(obj.geometry, loopPts, LineType.INFILL, tolerance)
 
-        # fill whatever those loops (plus the outline) leave uncovered: acute-corner
+        # fill whatever those loops (plus any stroke) leave uncovered: acute-corner
         # wedges and fractional-width slivers. coverage is measured against every drawn
-        # centerline, so gap strokes land only where the pen genuinely misses.
+        # centerline, so gap strokes land only where the pen genuinely misses. the raw
+        # outline itself is never drawn (see RAW_GEOMETRY), so it's excluded here too -
+        # coverage comes only from this object's own STROKE passes (if any) plus the
+        # fill loops just generated. known limitation: an open subpath's center-pass
+        # stroke gets offset with ET_CLOSEDLINE here (same as every other centerline),
+        # so it's treated as closed for coverage purposes - only matters for an object
+        # that mixes an open stroked subpath with a separately-fillable closed one, and
+        # only overstates coverage (never understates it, so it can't create a false gap)
         if settings.generateGapInfill:
-            gapLoops = _gapFill(region, clipperPaths + loops, spacing, tolerance, str(obj.id))
+            strokeCenterlines = [_toClipperPath(p.tessellate(tolerance, allowArcs=False).vertices()) for p in obj.geometry if p.lineType == LineType.STROKE]
+            strokeCenterlines = [p for p in strokeCenterlines if len(p) >= 2]
+            gapLoops = _gapFill(region, strokeCenterlines + loops, spacing, tolerance, str(obj.id))
             for loopPts in gapLoops:
                 _appendLoop(obj.geometry, loopPts, LineType.GAP_INFILL, tolerance)

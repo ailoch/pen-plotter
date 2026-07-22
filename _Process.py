@@ -3,6 +3,7 @@ from enum import Enum, auto
 from lib.settings import Settings
 from lib.svgparse import loadSvg, promptRescale, parseSvg, SvgParseError
 from lib.geometry import Document
+from lib.stroke import generateStroke, dropRawGeometry
 from lib.infill import generateInfill
 from lib.route import orderPaths
 from lib.plot import createFile
@@ -72,7 +73,9 @@ def run() -> RunResult:
             profiler.enable()
 
         document = parseSvg(svg, settings, scaleX, scaleY)
+        generateStroke(document, settings)
         generateInfill(document, settings)
+        dropRawGeometry(document)
         orderPaths(document, settings)
     else:
         # reusing an already-parsed document (output retry): time/profile the write only

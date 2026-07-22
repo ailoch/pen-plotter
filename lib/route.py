@@ -1,22 +1,16 @@
 from lib.geometry import Document
 from lib.settings import LineType, Settings
 
-# RAW_GEOMETRY has no shortTravelThresholds/heights entry of its own (it's a source
-# for stroke/fill generation, not a drawn role) - temporarily route it as PERIMETER
-# until stroke generation replaces it with real STROKE passes
-def _resolveRawGeometry(lineType: LineType) -> LineType:
-    return LineType.PERIMETER if lineType == LineType.RAW_GEOMETRY else lineType
-
 # the draw role a subpath/object item starts and ends on - a bare Path (subpath item)
 # has one lineType for its whole span; a PathObject (whole-object item) takes its first
 # and last subpath's lineType, which can differ when the object mixes roles
 def _itemLineTypeStart(item) -> LineType:
     lineType = getattr(item, "lineType", None)
-    return _resolveRawGeometry(lineType if lineType is not None else item.geometry[0].lineType)
+    return lineType if lineType is not None else item.geometry[0].lineType
 
 def _itemLineTypeEnd(item) -> LineType:
     lineType = getattr(item, "lineType", None)
-    return _resolveRawGeometry(lineType if lineType is not None else item.geometry[-1].lineType)
+    return lineType if lineType is not None else item.geometry[-1].lineType
 
 # estimates the cost of pen-up movement between the points
 # accounts for slower z motion and short travel moves that don't lift the pen
@@ -24,7 +18,7 @@ def _itemLineTypeEnd(item) -> LineType:
 # return units are in mm of equivalent xy travel (vertical travel is rescaled accordingly)
 def _travelCost(a: complex, b: complex, roleA: "LineType | None", roleB: "LineType | None", settings: Settings) -> float:
     distXY = abs(a - b)
-    threshold = settings.shortTravelThresholds[roleB or LineType.PERIMETER]
+    threshold = settings.shortTravelThresholds[roleB or LineType.STROKE]
     if roleA is not None:
         threshold = min(threshold, settings.shortTravelThresholds[roleA])
     if distXY < threshold:

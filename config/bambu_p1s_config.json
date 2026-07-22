@@ -11,12 +11,14 @@
         "canvasSize": [217, 243], // size of the paper/drawable surface - change this to change the paper size
         "canvasOffset": [0, 13], // offset of the canvas's (draw zone's) lower-left corner from the origin, in pen space
 
-        "maxVerticalSpeed": 10 // mm/s - max speed the printer's Z axis can move; the router assumes the slower of this and the travel speed when costing a travel's pen lift/lower time
+        "maxVerticalSpeed": 15, // mm/s - max speed the printer's Z axis can move; the router assumes the slower of this and the travel speed when costing a travel's pen lift/lower time
+
+        "generateStroke": true // if false, strokes draw as a single centerline pass regardless of strokeWidth (the pre-multi-pass behavior) instead of expanding to multiple passes
     },
 
     // controls how the pen moves while drawing
     "motion": {
-        // line types: draw (controls all drawing line types, can be overridden), "perimeter", "infill", "gapInfill", "travel"
+        // line types: draw (controls all drawing line types, can be overridden), "stroke", "infill", "gapInfill", "travel"
         "heights": {"draw": 2, "travel": 3.5, "_segmentBounds": 2.1, "_pathBounds": 2.2, "_documentBounds": 2.3}, // mm
         "speeds": {"draw": 30, "travel": 250}, // mm/s
         "accels": {"draw": 3000, "travel": 15000}, // mm/s^2
@@ -27,7 +29,7 @@
     // controls what is drawn on paper
     "processing": {
         "tessellationTolerance": 0.012, // max allowed deviation (mm) of gcode from the true curve
-        "infillSpacing": 0.3, // distance (mm) between concentric infill loops; 0 disables infill
+        "fillSpacing": 0.3, // distance (mm) between concentric fill loops (infill and stroke passes); 0 disables fill
         "generateGapInfill": true, // if true, adds extra strokes to fill small gaps in the infill
 
         "prefixFile": "gcode_templates/bambu_p1s_prefix.gcode",
@@ -49,7 +51,7 @@
           // role: shows role of lines in slicer view (uses lineTypes)
           // instruction: shows g1/g2/g3 instructions with different colors (uses instructionTypes)
           // segment: shows each line segment as a different color, cycling through segmentTypes
-        "lineTypes": {"perimeter": "Outer wall", "infill": "Internal solid infill", "gapInfill": "Gap infill", "_segmentBounds": "Support transition", "_pathBounds": "Support interface", "_documentBounds": "Support"},
+        "lineTypes": {"stroke": "Outer wall", "infill": "Internal solid infill", "gapInfill": "Gap infill", "_segmentBounds": "Support transition", "_pathBounds": "Support interface", "_documentBounds": "Support"},
         "instructionTypes": ["Sparse infill", "Support interface", "Overhang wall", "Gap infill"], // index 0 is G1, 1 is G2, 2 is G3, 3 is everything else
         "segmentTypes": ["Top surface", "Outer wall", "Inner wall", "Support", "Bridge", "Internal solid infill"]
     },

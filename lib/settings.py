@@ -5,7 +5,7 @@ import commentjson
 
 class LineType(Enum):
     RAW_GEOMETRY = auto() # raw geometry from input file. Never drawn, so does not need height/speed/accel of its own.
-    PERIMETER = auto()
+    STROKE = auto()
     INFILL = auto()
     GAP_INFILL = auto()
     TRAVEL = auto()
@@ -14,11 +14,11 @@ class LineType(Enum):
     _DOCUMENT_BOUNDS = auto()
 
 # the three draw roles that "draw" (in heights/speeds/accels/lineTypes) expands to
-_DRAW_LINE_TYPES = (LineType.PERIMETER, LineType.INFILL, LineType.GAP_INFILL)
+_DRAW_LINE_TYPES = (LineType.STROKE, LineType.INFILL, LineType.GAP_INFILL)
 
 # maps settings.json's move-type keys (heights/speeds/accels/lineTypes) to their LineType
 _LINE_TYPE_KEYS = {
-    "perimeter": LineType.PERIMETER,
+    "stroke": LineType.STROKE,
     "infill": LineType.INFILL,
     "gapInfill": LineType.GAP_INFILL,
     "travel": LineType.TRAVEL,
@@ -42,16 +42,18 @@ class Settings:
 
     maxVerticalSpeed: float = 600 # mm/min - most printers' Z axis is slower than X/Y, so the router assumes min(speeds[travel], maxVerticalSpeed) when costing a travel's pen lift/lower
 
+    generateStroke: bool = True # if false, strokes draw as a single centerline pass regardless of strokeWidth (the pre-multi-pass behavior) instead of expanding to multiple passes
+
     # motion settings
-    heights: dict[LineType, float] = field(default_factory=lambda: {LineType.PERIMETER: 0, LineType.INFILL: 0, LineType.GAP_INFILL: 0, LineType.TRAVEL: 10})
+    heights: dict[LineType, float] = field(default_factory=lambda: {LineType.STROKE: 0, LineType.INFILL: 0, LineType.GAP_INFILL: 0, LineType.TRAVEL: 10})
     speeds: dict[LineType, float] = field(default_factory=lambda: {LineType.TRAVEL: 3000})
     accels: dict[LineType, float] = field(default_factory=lambda: {LineType.TRAVEL: 1000})
-    shortTravelThresholds: dict[LineType, float] = field(default_factory=lambda: {LineType.PERIMETER: .5, LineType.INFILL: .5, LineType.GAP_INFILL: .5})
+    shortTravelThresholds: dict[LineType, float] = field(default_factory=lambda: {LineType.STROKE: .5, LineType.INFILL: .5, LineType.GAP_INFILL: .5})
     loadDelay: float = 20
 
     # processing settings
     tessellationTolerance: float = .012
-    infillSpacing: float = .3 # distance between concentric infill loops (mm); <= 0 disables infill
+    fillSpacing: float = .3 # distance between concentric fill loops (mm); <= 0 disables fill
     generateGapInfill: bool = True # if true, adds extra strokes to fill small gaps in the infill
 
     prefixFile: str = "gcode_templates/default_prefix.gcode"
@@ -105,7 +107,7 @@ class Settings:
     # warns user about invalid/inconsistent setting combinations; never resets to defaults
     def _validate(self):
         self._validateBounds()
-        if self.generateGapInfill and self.infillSpacing <= 0:
+        if self.generateGapInfill and self.fillSpacing <= 0:
             print("Warning: generateGapInfill is enabled but infill is disabled; gap infill will have no effect")
 
     def initFromJson(self, path):
@@ -159,7 +161,7 @@ class Settings:
                 match settingName: # some properties need special logic
                     case "heights" | "speeds" | "accels" | "lineTypes" | "shortTravelThresholds":
                         temp = {}
-                        # "draw" sets all three draw roles (perimeter/infill/gapInfill) at
+                        # "draw" sets all three draw roles (stroke/infill/gapInfill) at
                         # once; an explicit role key below overrides it for that role
                         if "draw" in setting:
                             v = setting["draw"]
