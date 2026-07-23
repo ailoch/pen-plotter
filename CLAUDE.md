@@ -41,6 +41,7 @@ Bidirectional greedy fitter: reduces any curve to Line/Arc within tolerance, wor
 - **Line merging**: `appendMerging` catches exact-collinear runs the fitter misses (each already fits individually).
 - **`fitLines=True`** (used by infill arc-recovery): re-fits raw polygon points → arcs, with optimized fast path for all-`Line` ranges (no per-segment interior sampling).
 - **Numerically unstable circumcircles rejected** via `MAX_RADIUS_TO_CHORD` guard — filters near-collinear noise.
+- **`allowArcs=False`** skips the fitter entirely and flattens each segment independently via `Segment.toPoints` (base-class recursive subdivision; `Line`/`Arc` override it with an exact split). `toPoints` checks flatness at two interior points (1/3, 2/3) per recursion level, not just the midpoint — a single midpoint sample can land exactly back on the chord for a point-symmetric curve (e.g. an S-shaped cubic bezier whose inflection sits exactly at t=0.5), which would wrongly read as "flat" and collapse the whole curve to a straight line even though it bows out on both sides of that point.
 
 ## Error Handling
 

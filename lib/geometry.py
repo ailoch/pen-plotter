@@ -151,23 +151,27 @@ class Segment(ABC):
         """Return the x and y extrema of a segment"""
 
     # samples this segment into points no more than tolerance (mm) from the true
-    # curve, including both endpoints. Cheap recursive midpoint subdivision -
-    # safe here because a single Segment is smooth (no interior corners), so the
-    # max chord deviation is always near the middle. subclasses with an exact
-    # formula (Line, Arc) override this
+    # curve, including both endpoints. Recursive subdivision, checked against two
+    # interior points (1/3, 2/3) rather than just the midpoint - a single midpoint
+    # sample can land exactly back on the chord for a point-symmetric curve (e.g.
+    # an S-shaped cubic bezier whose inflection sits exactly at t=0.5), which would
+    # wrongly read as "flat" even though the curve bows out on both sides of that
+    # point. subclasses with an exact formula (Line, Arc) override this
     def toPoints(self, tolerance: float) -> list[complex]:
         points: list[complex] = []
-        def recurse(t0: float, t1: float, p0: complex, p1: complex):
-            pm = self.point((t0 + t1) / 2)
+        def chordDev(p: complex, p0: complex, p1: complex) -> float:
             chord = p1 - p0
             if abs(chord) < 1e-9:
-                dev = abs(pm - p0)
-            else:
-                dev = abs(((pm - p0) * chord.conjugate() / abs(chord)).imag)
+                return abs(p - p0)
+            return abs(((p - p0) * chord.conjugate() / abs(chord)).imag)
+        def recurse(t0: float, t1: float, p0: complex, p1: complex):
+            ta, tb = t0 + (t1 - t0) / 3, t0 + (t1 - t0) * 2 / 3
+            dev = max(chordDev(self.point(ta), p0, p1), chordDev(self.point(tb), p0, p1))
             if dev <= tolerance:
                 points.append(p0)
             else:
                 mid = (t0 + t1) / 2
+                pm = self.point(mid)
                 recurse(t0, mid, p0, pm)
                 recurse(mid, t1, pm, p1)
         recurse(0.0, 1.0, self.point(0.0), self.point(1.0))
