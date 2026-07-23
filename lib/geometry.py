@@ -629,7 +629,8 @@ class Path:
 
     # returns whether this path encloses non-zero area - distinct from isClosed():
     # an open path can still enclose area and a closed path can still enclose zero
-    # area (a degenerate out-and-back trace)
+    # area (a degenerate out-and-back trace). This is a cheap, deliberately
+    # permissive gate for whether infill generation should even attempt a path
     def isFillable(self) -> bool:
         N_SAMPLES = 8
         pts: list[complex] = []
@@ -643,8 +644,8 @@ class Path:
         area = 0.0
         for i in range(len(pts)):
             p0, p1 = pts[i], pts[(i+1) % len(pts)]
-            area += p0.real*p1.imag - p1.real*p0.imag
-        return abs(area) / 2 > 1e-6
+            area += abs(p0.real*p1.imag - p1.real*p0.imag)
+        return area / 2 > 1e-6
 
     # returns the points where segments of the path meet
     def vertices(self) -> list[complex]:

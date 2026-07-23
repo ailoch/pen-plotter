@@ -300,13 +300,12 @@
        stroke="black"
        d="M160,0 L180,10"
        style="stroke:#000000;stroke-opacity:1" />
-    <!-- KNOWN LIMITATION: Path.isFillable()'s plain shoelace area calculation is
-         fill-rule-blind, so this bowtie's two opposite-wound lobes cancel to ~zero
-         net signed area and it's judged unfillable, even though pyclipper's evenodd
-         union (which IS fill-rule-aware) would resolve it into two real triangles if
-         ever reached. Since stroke="none" too, this object now draws nothing at all
-         (pre-dates stroke generation; previously masked by every RAW_GEOMETRY subpath
-         always getting an outline pass regardless of fillability) -->
+    <!-- self-intersecting bowtie, fill-rule evenodd, stroke="none" - exercises
+         Path.isFillable()'s self-intersection handling: this shape's two
+         opposite-wound lobes cancel to ~zero NET signed area, so isFillable() sums
+         the ABSOLUTE value of each shoelace term instead (see lib/geometry.py) to
+         avoid a false negative here, then pyclipper's evenodd union resolves it
+         into the two real triangular lobes -->
     <path
        id="fill-figure-eight-selfintersect"
        fill-rule="evenodd"
