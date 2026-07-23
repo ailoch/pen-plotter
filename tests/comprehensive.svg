@@ -604,6 +604,14 @@
        fill="black"
        fill-opacity="0.3"
        stroke="none" />
+    <rect
+       id="opacity-zero-not-drawn"
+       x="192"
+       y="20"
+       width="16"
+       height="16"
+       opacity="0"
+       fill="black" />
     <!-- regular 7-gon, centered (202,196) absolute / (198,8) local, r~7 - a closed
          path whose segment count (7) doesn't divide evenly into visualization's
          default 6-entry segmentTypes list, so cycling naturally wraps the last

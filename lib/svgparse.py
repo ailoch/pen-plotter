@@ -64,9 +64,45 @@ def readStyle(element: svgelements.SVGElement) -> Style:
         #fillColor=getattr(element, "fill", [0, 0, 0])
     )
 
+# svgelements resolves the cascaded (inherited + overridden) value into node.values,
+# same as readStyle's other presentation attributes - a hidden ancestor group with a
+# visibility="visible" descendant correctly resolves to the descendant being visible.
+# display:none is NOT handled here: svgelements drops those elements before they ever
+# reach this function (they're absent from the SVG's own iteration), so there's
+# nothing to check for that case.
+# opacity=0 is treated the same way: it's real, total invisibility (unlike a
+# fractional opacity, which this converter can't represent as partial ink and just
+# draws at full strength - see the "opacity" [PARTIAL] fixture). Only the element-wide
+# `opacity` is checked, not fill-opacity/stroke-opacity - either of those alone still
+# leaves the other visible, so it's not a "should this object be drawn at all"
+# case. Note svgelements resolves opacity via the same override-wins cascade as
+# visibility (values.get), which isn't quite true SVG compositing semantics (a real
+# renderer can't let a child "escape" a 0-opacity ancestor group by setting its own
+# opacity back to 1) - close enough for this converter's purposes
+def _isVisible(node: svgelements.SVGElement) -> bool:
+    values = getattr(node, "values", {})
+    if values.get("visibility", "visible") in ("hidden", "collapse"):
+        return False
+    opacity = values.get("opacity")
+    if opacity is not None:
+        try:
+            if float(opacity) <= 0:
+                return False
+        except ValueError:
+            pass
+    return True
+
 def parseSvgElement(node: svgelements.SVGElement, docTransform: Transform, document: Document, textNames: list[str]):
     nodeTransform = docTransform @ Transform(getattr(node, "transform", None))
-    if isinstance(node, (svgelements.Circle, svgelements.Ellipse)):
+    # groups themselves are never skipped here even if hidden - a descendant can set
+    # visibility="visible" to override its hidden ancestor, so recursion must continue;
+    # each leaf branch below checks its own resolved visibility instead
+    if isinstance(node, svgelements.Group):
+        for child in node:
+            parseSvgElement(child, docTransform, document, textNames)
+    elif not _isVisible(node):
+        pass # hidden leaf element - parsed but intentionally not added to the document
+    elif isinstance(node, (svgelements.Circle, svgelements.Ellipse)):
         temp = PathObject(str(node.id)) # str() to make pylance happy
         temp.style = readStyle(node)
         temp.transform = nodeTransform
@@ -150,9 +186,6 @@ def parseSvgElement(node: svgelements.SVGElement, docTransform: Transform, docum
         finalizeSubpath()
         if temp.geometry: # skip degenerate/empty shapes (e.g. d="", coincident line endpoints) -
             document.add(temp) # nothing to draw, and an empty Path would crash later in the pipeline
-    elif isinstance(node, svgelements.Group):
-        for child in node:
-            parseSvgElement(child, docTransform, document, textNames)
     elif isinstance(node, svgelements.Text):
         if node.text: # only print for non empty text objects
             textNames.append(str(node.id))
