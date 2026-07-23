@@ -8,13 +8,14 @@ class LineType(Enum):
     STROKE = auto()
     INFILL = auto()
     GAP_INFILL = auto()
+    INVALID = auto() # a draw segment that falls outside the canvas - only used when settings.showOutOfBounds is true
     TRAVEL = auto()
     _SEGMENT_BOUNDS = auto()
     _PATH_BOUNDS = auto()
     _DOCUMENT_BOUNDS = auto()
 
-# the three draw roles that "draw" (in heights/speeds/accels/lineTypes) expands to
-_DRAW_LINE_TYPES = (LineType.STROKE, LineType.INFILL, LineType.GAP_INFILL)
+# the draw roles that "draw" (in heights/speeds/accels/lineTypes) expands to
+_DRAW_LINE_TYPES = (LineType.STROKE, LineType.INFILL, LineType.GAP_INFILL, LineType.INVALID)
 
 # valid safeZoneAlignment/canvasAlignment values - first char is vertical (Bottom/Top),
 # second is horizontal (Left/Right), naming the plate corner the *Offset is measured from
@@ -35,6 +36,7 @@ _LINE_TYPE_KEYS = {
     "stroke": LineType.STROKE,
     "infill": LineType.INFILL,
     "gapInfill": LineType.GAP_INFILL,
+    "invalid": LineType.INVALID,
     "travel": LineType.TRAVEL,
     "_segmentBounds": LineType._SEGMENT_BOUNDS,
     "_pathBounds": LineType._PATH_BOUNDS,
@@ -59,7 +61,7 @@ class Settings:
     maxVerticalSpeed: float = 600 # mm/min - most printers' Z axis is slower than X/Y, so the router assumes min(speeds[travel], maxVerticalSpeed) when costing a travel's pen lift/lower
 
     # motion settings
-    heights: dict[LineType, float] = field(default_factory=lambda: {LineType.STROKE: 0, LineType.INFILL: 0, LineType.GAP_INFILL: 0, LineType.TRAVEL: 10})
+    heights: dict[LineType, float] = field(default_factory=lambda: {LineType.STROKE: 0, LineType.INFILL: 0, LineType.GAP_INFILL: 0, LineType.INVALID: 0, LineType.TRAVEL: 10})
     speeds: dict[LineType, float] = field(default_factory=lambda: {LineType.TRAVEL: 3000})
     accels: dict[LineType, float] = field(default_factory=lambda: {LineType.TRAVEL: 1000})
     shortTravelThresholds: dict[LineType, float] = field(default_factory=lambda: {LineType.STROKE: .5, LineType.INFILL: .5, LineType.GAP_INFILL: .5})
@@ -71,6 +73,7 @@ class Settings:
     fillSpacing: float = .3 # distance between concentric fill loops (mm); <= 0 disables fill
     generateGapInfill: bool = True # if true, adds extra strokes to fill small gaps in the infill
     generateStroke: bool = True # if false, strokes draw as a single centerline pass regardless of strokeWidth (the pre-multi-pass behavior) instead of expanding to multiple passes
+    showOutOfBounds: bool = False # if true, segments outside the canvas are still drawn, tagged LineType.INVALID for slicer-preview visibility; if false, they're cropped to the canvas edge
 
     prefixFile: str = "gcode_templates/default_prefix.gcode"
     suffixFile: str = "gcode_templates/default_suffix.gcode"

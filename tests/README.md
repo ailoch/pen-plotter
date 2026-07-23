@@ -16,11 +16,9 @@ Status tags used in the SVG comments:
 
 ## `comprehensive.svg`
 
-One file, `viewBox` matches `testDrawing.svg`'s size (215.89999×230 mm) rather
-than the currently-configured `canvasSize` (217×243) — `canvasSize` is expected
-to be updated to match `testDrawing.svg` at some point, at which point this
-also stops triggering a rescale prompt. Organized into top-level `<g>` bands,
-each split into subgroups:
+One file, `viewBox` matches the currently-configured `canvasSize` (215.9×243
+mm), so it loads at scale (1,1) with no rescale prompt. Organized into
+top-level `<g>` bands, each split into subgroups:
 
 | Group | Covers |
 |-------|--------|
@@ -30,7 +28,8 @@ each split into subgroups:
 | `fill-gapfill` | acute wedge, tapering slot, region below `fillSpacing`, thin sliver, concentric circle — the cases `_gapFill` exists to handle |
 | `stroke` | varying widths (thin/medium/thick), zigzag, multiple subpaths, self-intersection, dashes (pattern + offset) `[PARTIAL]`, joins (bevel/round/miter + miterlimit, thickened to 4mm on an acute-angled V so the join shapes actually differ) `[OK]`, caps (butt/round/square) `[OK]`, markers `[PARTIAL]`; a `stroke-expansion` subgroup covers a wide multi-pass closed stroke, combined stroke+fill (fill inset following the stroke's inner edge), a non-uniformly-transformed stroke width, and a stroke="none"+fill="none" shape that's dropped entirely. Real multi-pass generation via `lib/stroke.py` — width/joins/caps/miterlimit are `[OK]` |
 | `structure-misc` | nested groups, fill inheritance + override, `<use>`/`<symbol>` `[DROP]`, clipPath/mask/pattern `[PARTIAL]`, `display:none` & `visibility:hidden` ⚠️ *drawn anyway — see Known gaps*, opacity `[PARTIAL]` |
-| `degenerate` | zero-length line, zero-radius circle, empty path (dropped - nothing to draw or route), coincident points, off-canvas rect |
+| `degenerate` | zero-length line, zero-radius circle, empty path (dropped - nothing to draw or route), coincident points |
+| `canvas-bounds` | deliberately hangs off the canvas's right/bottom edges - exercises `lib/plot.py`'s `_splitAtBounds` (cropping/marking segments outside the canvas, gated on `processing.showOutOfBounds`): a rect and a circle each fully outside (bbox fast-path, one per segment type), a 2-segment polyline crossing the boundary twice (once per segment), a 3-segment polyline crossing three times, a single line crossing two *different* edges (bottom + right, clipping through the corner region between two outside endpoints), a single line crossing two *opposite* edges (top + bottom, spanning the full canvas height), a circle straddling one edge (2 crossings - a single connected excursion), a circle bulging through two edges without reaching the corner point itself (4 crossings, two separate excursions - the multi-crossing case on a single `Arc`) |
 
 ### Text
 `text-object-as-path` is `<text>` converted via Inkscape's **Path → Object to

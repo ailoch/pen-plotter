@@ -191,7 +191,91 @@ def _penMove(state: _DrawState, settings: Settings, pos: complex, file: TextIO, 
             _addLine(state, settings, {"G": "1", "X": str(pos.real), "Y": str(pos.imag), "E": math.hypot(pos.real-state.pos["X"], pos.imag-state.pos["Y"]) * settings.eAxisMultiplier}, file, lineType or LineType.STROKE)
             state.lastLineType = lineType or LineType.STROKE
 
+# emits one already-classified Line or Arc as a draw move under lineType - the body of
+# the old per-segment loop in _addPath, factored out so cropped/marked pieces from
+# _splitAtBounds can be emitted the same way as an untouched segment
+def _emitSegment(state: _DrawState, settings: Settings, segment: Line | Arc, file: TextIO, lineType: LineType | None, raised: bool):
+    if isinstance(segment, Line):
+        _penMove(state, settings, segment.start, file, True, lineType, raised=raised)
+        _penMove(state, settings, segment.end, file, lineType=lineType, raised=raised)
+    elif isinstance(segment, Arc):
+        _penMove(state, settings, segment.point(0), file, True, lineType, raised=raised)
+        _setDrawHeight(state, settings, file, lineType, raised)
+        centerOffset = segment.center - segment.point(0)
+        end = segment.point(1)
+        params = {"G": "2", "X": end.real, "Y": end.imag, "I": centerOffset.real, "J": centerOffset.imag, "E": segment.length() * settings.eAxisMultiplier}
+        if segment.sweep < 0:
+            params["G"] = "3"
+        _addLine(state, settings, params, file, lineType)
+        state.lastLineType = lineType or LineType.STROKE
+    else:
+        print(f"Unknown path type {type(segment)}")
+
+# the canvas rect in nozzle/gcode space, as (xmin, ymin, xmax, ymax) - segment
+# coordinates (post parseSvg transform) are always nozzle space (pen space minus
+# penOffset) regardless of visualization.showPenPos, which only affects how the slicer
+# LABELS positions in preview, not the real motion
+def _canvasBoundsNozzle(settings: Settings) -> tuple[float, float, float, float]:
+    minPt = settings.canvasOffset - settings.penOffset
+    maxPt = minPt + settings.canvasSize
+    return (minPt.real, minPt.imag, maxPt.real, maxPt.imag)
+
+def _inBounds(pt: complex, bounds: tuple[float, float, float, float]) -> bool:
+    xmin, ymin, xmax, ymax = bounds
+    return xmin <= pt.real <= xmax and ymin <= pt.imag <= ymax
+
+# returns a copy of segment spanning local parameter range [t0, t1] (0 <= t0 <= t1 <= 1)
+def _subsegment(segment: Line | Arc, t0: float, t1: float) -> Line | Arc:
+    if isinstance(segment, Line):
+        return Line(start=segment.point(t0), end=segment.point(t1))
+    return Arc(center=segment.center, u=segment.u, v=segment.v, t0=segment.t0 + t0 * segment.sweep, sweep=(t1 - t0) * segment.sweep)
+
+_BOUNDS_T_EPS = 1e-9 # crossings closer than this (in the segment's own [0,1] space) to
+# each other or to an endpoint are collapsed - a corner hit registers on both adjacent
+# edges and a tangency double-roots, neither of which should yield a zero-length piece
+
+# splits segment into consecutive runs that are each fully inside or fully outside
+# `bounds`, returned as [(subsegment, isInBounds), ...] in original segment order.
+# Adjacent same-side runs (tangent touches split the curve without changing sides)
+# are merged, so the result strictly alternates in/out
+def _splitAtBounds(segment: Line | Arc, bounds: tuple[float, float, float, float]) -> list[tuple[Line | Arc, bool]]:
+    sxmin, symin, sxmax, symax = segment.bounds()
+    bxmin, bymin, bxmax, bymax = bounds
+    if sxmin >= bxmin and symin >= bymin and sxmax <= bxmax and symax <= bymax:
+        return [(segment, True)]
+    if sxmax < bxmin or sxmin > bxmax or symax < bymin or symin > bymax:
+        return [(segment, False)]
+
+    corners = (complex(bxmin, bymin), complex(bxmax, bymin), complex(bxmax, bymax), complex(bxmin, bymax))
+    ts: list[float] = []
+    for i in range(4):
+        for pt in segment @ Line(corners[i], corners[(i + 1) % 4]):
+            t = segment.tAtPoint(pt)
+            if t is not None and _BOUNDS_T_EPS < t < 1 - _BOUNDS_T_EPS: # endpoint grazes split nothing
+                ts.append(t)
+    ts.sort()
+
+    split = [0.0]
+    for t in ts:
+        if t - split[-1] > _BOUNDS_T_EPS:
+            split.append(t)
+    split.append(1.0)
+
+    # classify each piece by its midpoint, merging same-side neighbors
+    runs: list[tuple[float, float, bool]] = []
+    for i in range(len(split) - 1):
+        isIn = _inBounds(segment.point((split[i] + split[i + 1]) / 2), bounds)
+        if runs and runs[-1][2] == isIn:
+            runs[-1] = (runs[-1][0], split[i + 1], isIn)
+        else:
+            runs.append((split[i], split[i + 1], isIn))
+
+    if len(runs) == 1: # no side change - keep the original segment object untouched
+        return [(segment, runs[0][2])]
+    return [(_subsegment(segment, t0, t1), isIn) for t0, t1, isIn in runs]
+
 def _addPath(state: _DrawState, settings: Settings, object: PathObject, file: TextIO, raised: bool = False):
+    bounds = _canvasBoundsNozzle(settings)
     for path in object.geometry:
         # RAW_GEOMETRY is a source for stroke/fill generation, never drawn itself
         if path.lineType == LineType.RAW_GEOMETRY:
@@ -199,21 +283,16 @@ def _addPath(state: _DrawState, settings: Settings, object: PathObject, file: Te
         lineType = path.lineType
         tessellated = path.tessellate(settings.tessellationTolerance)
         for segment in tessellated.segments:
-            if isinstance(segment, Line):
-                _penMove(state, settings, segment.start, file, True, lineType, raised=raised)
-                _penMove(state, settings, segment.end, file, lineType=lineType, raised=raised)
-            elif isinstance(segment, Arc):
-                _penMove(state, settings, segment.point(0), file, True, lineType, raised=raised)
-                _setDrawHeight(state, settings, file, lineType, raised)
-                centerOffset = segment.center - segment.point(0)
-                end = segment.point(1)
-                params = {"G": "2", "X": end.real, "Y": end.imag, "I": centerOffset.real, "J": centerOffset.imag, "E": segment.length() * settings.eAxisMultiplier}
-                if segment.sweep < 0:
-                    params["G"] = "3"
-                _addLine(state, settings, params, file, lineType)
-                state.lastLineType = lineType or LineType.STROKE
-            else:
+            if not isinstance(segment, (Line, Arc)):
                 print(f"Unknown path type {type(segment)}")
+                continue
+            for piece, isIn in _splitAtBounds(segment, bounds):
+                if isIn:
+                    _emitSegment(state, settings, piece, file, lineType, raised)
+                elif settings.showOutOfBounds:
+                    _emitSegment(state, settings, piece, file, LineType.INVALID, raised)
+                # else: crop mode - drop the out-of-bounds piece; the next surviving
+                # piece's leading _penMove(travel=True) naturally bridges the gap
     if settings.showBoundingBoxes:
         for path in object.geometry:
             for segment in path.segments:

@@ -188,6 +188,11 @@ class Segment(ABC):
         # bambu studio renderer breaks if very large coordinates are given
         return (max(temp[0], -5000), max(temp[1], -5000), min(temp[2], 5256), min(temp[3], 5256))
 
+# tolerance shared by the Line/Arc intersection methods (@ operator) and tAtPoint, in
+# both parameter space (t just outside [0,1] from float noise still counts as an
+# endpoint hit) and geometry space (mm, for coincident-point dedup)
+_INTERSECT_EPS = 1e-9
+
 @dataclass
 class Line(Segment):
     start: complex = complex()
@@ -217,6 +222,83 @@ class Line(Segment):
 
     def toPoints(self, tolerance: float) -> list[complex]:
         return [self.start, self.end]
+
+    # parameter of pt on this line, or None if it falls outside the segment. pt is
+    # assumed to lie on the (infinite) line - what's actually computed is the
+    # projection, so an off-line point yields the parameter of its closest approach
+    def tAtPoint(self, pt: complex) -> float | None:
+        d = self.end - self.start
+        len2 = d.real*d.real + d.imag*d.imag
+        if len2 < _INTERSECT_EPS**2: # degenerate (zero-length) line
+            return 0.0 if abs(pt - self.start) <= _INTERSECT_EPS else None
+        t = ((pt - self.start) * d.conjugate()).real / len2
+        if -_INTERSECT_EPS <= t <= 1 + _INTERSECT_EPS:
+            return min(max(t, 0.0), 1.0)
+        return None
+
+    # segment @ segment -> the points where the two intersect. Line owns the
+    # line-line and line-arc computations; Arc.__matmul__ declines Line operands, so
+    # arc @ line also resolves here (via __rmatmul__ below)
+    def __matmul__(self, other: object) -> "list[complex]":
+        if isinstance(other, Line):
+            return self._intersectLine(other)
+        if isinstance(other, Arc):
+            return self._intersectArc(other)
+        return NotImplemented
+
+    # intersection is symmetric (an unordered set of points), so the reflected
+    # operator can reuse the same dispatch
+    __rmatmul__ = __matmul__
+
+    # line-line segment intersection: solves self.start + t*da = other.start + s*db
+    # via the 2D cross product, accepting the hit only when both parameters land in
+    # [0, 1]. Parallel pairs - including collinear overlaps, which have no single
+    # intersection point - return no points
+    def _intersectLine(self, other: "Line") -> list[complex]:
+        da = self.end - self.start
+        db = other.end - other.start
+        denom = da.real*db.imag - da.imag*db.real
+        if abs(denom) <= _INTERSECT_EPS * (abs(da) * abs(db) + _INTERSECT_EPS): # parallel
+            return []
+        w = other.start - self.start
+        t = (w.real*db.imag - w.imag*db.real) / denom
+        s = (w.real*da.imag - w.imag*da.real) / denom
+        if -_INTERSECT_EPS <= t <= 1 + _INTERSECT_EPS and -_INTERSECT_EPS <= s <= 1 + _INTERSECT_EPS:
+            return [self.point(min(max(t, 0.0), 1.0))]
+        return []
+
+    # line-arc intersection, done in the arc's own circle space: the arc is the image
+    # of the unit circle under x -> center + [u v]x, so inverse-mapping the line
+    # reduces this to line-vs-unit-circle - a quadratic in the line's own parameter t,
+    # which the affine map preserves (this also handles elliptical arcs for free).
+    # Each root must land within the line's [0,1] AND the arc's swept range
+    # (_thetaToT on the circle-space angle) to count
+    def _intersectArc(self, arc: "Arc") -> list[complex]:
+        p0 = arc._toCircleSpace(self.start)
+        p1 = arc._toCircleSpace(self.end)
+        if p0 is None or p1 is None: # degenerate arc basis
+            return []
+        d = p1 - p0
+        qa = d.real*d.real + d.imag*d.imag
+        if qa < _INTERSECT_EPS**2: # zero-length line
+            return []
+        qb = 2 * (p0.real*d.real + p0.imag*d.imag)
+        qc = p0.real*p0.real + p0.imag*p0.imag - 1
+        disc = qb*qb - 4*qa*qc
+        if disc < 0: # line misses the circle entirely
+            return []
+        sqrtDisc = math.sqrt(disc)
+        points: list[complex] = []
+        for t in ((-qb - sqrtDisc) / (2*qa), (-qb + sqrtDisc) / (2*qa)):
+            if not -_INTERSECT_EPS <= t <= 1 + _INTERSECT_EPS:
+                continue
+            onCircle = p0 + t*d
+            if arc._thetaToT(math.atan2(onCircle.imag, onCircle.real)) is None:
+                continue
+            points.append(self.point(min(max(t, 0.0), 1.0)))
+        if len(points) == 2 and abs(points[0] - points[1]) <= _INTERSECT_EPS: # tangency double-root
+            points.pop()
+        return points
 
 @dataclass
 class Arc(Segment):
@@ -341,6 +423,60 @@ class Arc(Segment):
         thetaMax = max(math.acos(cosVal), 1e-3)
         numSteps = max(1, math.ceil(sweep / (2 * thetaMax)))
         return [self.point(i / numSteps) for i in range(numSteps + 1)]
+
+    # inverse of the u/v basis as circle-space coordinates: returns (cos, sin) of pt's
+    # angle as a complex, or None if the basis is degenerate. Shared by tAtPoint and
+    # Line._intersectArc, which both need to move points into the space where the
+    # arc is the unit circle
+    def _toCircleSpace(self, pt: complex) -> complex | None:
+        det = self.u.real*self.v.imag - self.u.imag*self.v.real
+        if abs(det) <= _INTERSECT_EPS * (abs(self.u) * abs(self.v) + _INTERSECT_EPS):
+            return None
+        w = pt - self.center
+        return complex((w.real*self.v.imag - w.imag*self.v.real) / det,
+                       (w.imag*self.u.real - w.real*self.u.imag) / det)
+
+    # parameter of pt on this arc, or None if its angle falls outside the swept range
+    # (or the u/v basis is degenerate). pt is assumed to lie on the arc's circle - only
+    # its ANGLE is used, so an off-circle point yields the parameter of the arc point
+    # at the same angle
+    def tAtPoint(self, pt: complex) -> float | None:
+        onCircle = self._toCircleSpace(pt)
+        if onCircle is None:
+            return None
+        return self._thetaToT(math.atan2(onCircle.imag, onCircle.real))
+
+    # segment @ segment -> the points where the two intersect. Arc owns only the
+    # arc-arc computation; a Line operand is declined so Python re-dispatches
+    # arc @ line to Line.__rmatmul__, keeping all line-involved cases in Line
+    def __matmul__(self, other: object) -> "list[complex]":
+        if isinstance(other, Arc):
+            return self._intersectArc(other)
+        return NotImplemented # type: ignore[return-value] - operator protocol's "unsupported operand" sentinel
+
+    # arc-arc intersection via the standard two-circle construction, each candidate
+    # point checked against both arcs' swept ranges. Circular arcs only -
+    # tessellation never produces elliptical ones, and an elliptical pair would need
+    # quartic root-finding
+    def _intersectArc(self, other: "Arc") -> list[complex]:
+        r1, r2 = abs(self.u), abs(other.u)
+        for arc, r in ((self, r1), (other, r2)):
+            eps = _INTERSECT_EPS * max(r * r, 1.0)
+            if abs(abs(arc.v) - r) * r > eps or abs(arc.u.real*arc.v.real + arc.u.imag*arc.v.imag) > eps:
+                raise NotImplementedError("arc-arc intersection is only supported for circular arcs")
+        between = other.center - self.center
+        d = abs(between)
+        if d <= _INTERSECT_EPS: # concentric: coincident (infinitely many points) or disjoint - no single points either way
+            return []
+        if d > r1 + r2 + _INTERSECT_EPS or d < abs(r1 - r2) - _INTERSECT_EPS: # too far apart / nested
+            return []
+        along = (r1*r1 - r2*r2 + d*d) / (2*d) # distance from self.center to the chord joining the two crossing points
+        h2 = r1*r1 - along*along
+        h = math.sqrt(h2) if h2 > 0 else 0.0 # half that chord's length; 0 = tangent circles
+        dirVec = between / d
+        base = self.center + along*dirVec
+        candidates = [base + 1j*h*dirVec, base - 1j*h*dirVec] if h > _INTERSECT_EPS else [base]
+        return [p for p in candidates if self.tAtPoint(p) is not None and other.tAtPoint(p) is not None]
 
 @dataclass
 class QuadraticBezier(Segment):

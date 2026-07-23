@@ -33,6 +33,7 @@
         "fillSpacing": 0.3, // distance (mm) between concentric fill loops (infill and stroke passes); 0 disables fill
         "generateGapInfill": true, // if true, adds extra strokes to fill small gaps in the infill
         "generateStroke": true, // if false, strokes draw as a single centerline pass regardless of strokeWidth (the pre-multi-pass behavior) instead of expanding to multiple passes
+        "showOutOfBounds": false, // if true, segments outside the canvas are still drawn, tagged as the "invalid" line type for slicer-preview visibility; if false (default), they're cropped to the canvas edge instead
 
         "prefixFile": "gcode_templates/bambu_p1s_prefix.gcode",
         "suffixFile": "gcode_templates/bambu_p1s_suffix.gcode"
@@ -53,7 +54,7 @@
           // role: shows role of lines in slicer view (uses lineTypes)
           // instruction: shows g1/g2/g3 instructions with different colors (uses instructionTypes)
           // segment: shows each line segment as a different color, cycling through segmentTypes
-        "lineTypes": {"stroke": "Outer wall", "infill": "Internal solid infill", "gapInfill": "Gap infill", "_segmentBounds": "Support transition", "_pathBounds": "Support interface", "_documentBounds": "Support"},
+        "lineTypes": {"stroke": "Outer wall", "infill": "Internal solid infill", "gapInfill": "Gap infill", "invalid": "Invalid", "_segmentBounds": "Support transition", "_pathBounds": "Support interface", "_documentBounds": "Support"},
         "instructionTypes": ["Sparse infill", "Support interface", "Overhang wall", "Gap infill"], // index 0 is G1, 1 is G2, 2 is G3, 3 is everything else
         "segmentTypes": ["Top surface", "Outer wall", "Inner wall", "Support", "Bridge", "Internal solid infill"]
     },

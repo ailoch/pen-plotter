@@ -3,12 +3,10 @@
   ============================================================================
   COMPREHENSIVE PARSER / PIPELINE TEST DRAWING
   ============================================================================
-  viewBox matches testDrawing.svg's size (215.89999 x 230 mm) rather than the
-  currently-configured canvasSize (217 x 243) - canvasSize is expected to be
-  updated to match testDrawing at some point, at which point this stops
-  triggering a rescale prompt too. Organized into top-level <g> groups (one per
-  feature area), each translated into its own horizontal band and split into
-  subgroups.
+  viewBox matches the currently-configured canvasSize (215.9 x 243 mm), so this
+  loads at scale (1,1) with no rescale prompt. Organized into top-level <g>
+  groups (one per feature area), each translated into its own horizontal band
+  and split into subgroups.
 
   Every element has an id naming WHAT IT TESTS - not whether the parser
   currently handles it (status belongs in the comments below, since it can
@@ -35,9 +33,9 @@
 -->
 
 <svg
-   width="215.89999mm"
-   height="230mm"
-   viewBox="0 0 215.89999 230"
+   width="215.9mm"
+   height="243mm"
+   viewBox="0 0 215.9 243"
    fill="none"
    stroke="black"
    stroke-width="0.3"
@@ -59,21 +57,21 @@
      inkscape:pagecheckerboard="0"
      inkscape:deskcolor="#d1d1d1"
      inkscape:document-units="mm"
-     inkscape:zoom="1.7511215"
-     inkscape:cx="327.78994"
-     inkscape:cy="216.71826"
+     inkscape:zoom="2.2764579"
+     inkscape:cx="628.60814"
+     inkscape:cy="841.87806"
      inkscape:window-width="3440"
      inkscape:window-height="1369"
      inkscape:window-x="1912"
      inkscape:window-y="-8"
      inkscape:window-maximized="1"
-     inkscape:current-layer="basic-shapes" />
+     inkscape:current-layer="svg5" />
   <rect
      id="reference-border"
      x="0.5"
      y="0.5"
      width="214.9"
-     height="229"
+     height="242"
      fill="none"
      stroke="black"
      stroke-width="0.25" />
@@ -459,7 +457,8 @@
     <!-- multi-pass stroke expansion cases (lib/stroke.py) - placed in the space the
          stroke-joins shift (above) freed up. absolute (110,123)-(215,160) and
          (110,160)-(160,185), i.e. local (106,1)-(211,38) and (106,38)-(156,63) here. -->
-    <g id="stroke-expansion">
+    <g
+       id="stroke-expansion">
       <!-- wide stroke-width >> fillSpacing (0.3mm default) forces multiple concentric
            passes per side (numPasses = ceil(3/0.3) = 10) -->
       <rect
@@ -482,7 +481,9 @@
          stroke-linejoin="round" />
       <!-- stroke-width scales with a non-degenerate ancestor transform
            (PathObject.applyTransformations) - pre-scale width 1 -> effective ~2 -->
-      <g transform="translate(170,3) scale(2)">
+      <g
+         transform="translate(170,3) scale(2)"
+         id="g1">
         <rect
            id="stroke-scaled-width"
            x="0"
@@ -515,10 +516,10 @@
        stroke="none">
       <g
          transform="translate(0,0)"
-         id="g2">
+         id="g3">
         <g
            transform="translate(2,2)"
-           id="g1">
+           id="g2">
           <rect
              id="nested-groups-leaf-rect"
              x="0"
@@ -630,12 +631,94 @@
        d="M16,0 L16,0 L28,0 L28,8 L28,8 Z"
        fill="none"
        stroke="black" />
+  </g>
+  <!-- ======================================================================
+       BAND 7: CANVAS BOUNDS  (deliberately hangs off the right/bottom canvas
+       edges - exercises lib/plot.py's _splitAtBounds under both
+       processing.showOutOfBounds values: true tags the out-of-canvas pieces
+       LineType.INVALID instead of dropping them, false (default) crops them.
+       Group origin (150,190); canvas edges (215.9,243) fall at local (65.9,53).
+       ====================================================================== -->
+  <g
+     id="canvas-bounds"
+     transform="translate(150,190)"
+     stroke-width="0.2">
+    <!-- entirely beyond both edges - a straight-line clip check per CLAUDE.md's
+         _splitAtBounds: an object fully outside is either dropped whole (crop) or
+         drawn whole as INVALID (show), no splitting needed -->
     <rect
-       id="degenerate-off-canvas"
-       x="120"
-       y="-8"
-       width="120"
-       height="20"
+       id="bounds-fully-outside"
+       x="90"
+       y="60"
+       width="20"
+       height="15"
+       fill="none"
+       stroke="black" />
+    <!-- same "fully outside" case as bounds-fully-outside but on an Arc instead of
+         Lines - exercises the same bbox fast-path for the other segment type -->
+    <circle
+       id="bounds-circle-fully-outside"
+       cx="68.099998"
+       cy="70"
+       r="8"
+       fill="none"
+       stroke="#000000" />
+    <!-- 2-segment polyline: inside -> outside (past the bottom edge) -> inside.
+         each straight segment can cross a convex rect at most once, so this is 2
+         crossings spread across 2 segments, not 1 segment crossing twice -->
+    <path
+       id="bounds-zigzag-crosses-twice"
+       d="M10,20 L10,60 L40,20"
+       fill="none"
+       stroke="black" />
+    <!-- 3-segment polyline alternating inside/outside across the bottom edge:
+         in -> out -> in -> out, 3 crossings total -->
+    <path
+       id="bounds-zigzag-crosses-three-times"
+       d="m -37.652612,24.644461 v 45 l 25,-45 v 45"
+       fill="none"
+       stroke="#000000" />
+    <!-- single straight line, both endpoints outside - one below the bottom edge,
+         one right of the right edge - clipping through the corner region between
+         them. 2 crossings on ONE segment, but on two DIFFERENT edges (unlike
+         bounds-zigzag-crosses-twice, which crosses the same edge twice) -->
+    <path
+       id="bounds-line-crosses-bottom-and-right"
+       d="m 47.143287,58.889056 25,-20"
+       fill="none"
+       stroke="#000000"
+       sodipodi:nodetypes="cc" />
+    <!-- single straight line spanning the full canvas height and beyond - one
+         endpoint above the top edge (local y=-200, abs y=-10), one below the
+         bottom edge. 2 crossings on ONE segment, on OPPOSITE edges (top+bottom)
+         rather than adjacent ones -->
+    <path
+       id="bounds-line-crosses-top-and-bottom"
+       d="M 62.6,-200 V 60"
+       fill="none"
+       stroke="#000000" />
+    <!-- circle straddling a single edge (the bottom edge, local y=53): the closed
+         Arc segment crosses the boundary twice (dips below, comes back up) -->
+    <circle
+       id="bounds-circle-straddle-edge"
+       cx="30.084698"
+       cy="51.900002"
+       r="6.9000001"
+       fill="none"
+       stroke="#000000"
+       style="stroke-width:0.2" />
+    <!-- circle bulging out through both the right and bottom edges without
+         reaching the corner itself (center-to-corner distance 48.76 > r=40) - two
+         separate outside excursions, one per edge, crossing the boundary 4 times
+         total. This is the multi-crossing case _splitAtBounds' coarse scan exists
+         for (a circle straddling the corner point itself only crosses twice - a
+         single connected excursion through the corner's wedge, same topology as
+         bounds-circle-straddle-edge) -->
+    <circle
+       id="bounds-circle-crosses-two-edges"
+       cx="30"
+       cy="20"
+       r="40"
        fill="none"
        stroke="black" />
   </g>
