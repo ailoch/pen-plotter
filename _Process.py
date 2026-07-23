@@ -32,6 +32,9 @@ def promptOutputFile(previous: str | None = None) -> str:
                 return previous
             print("Please enter an output file.")
             continue
+        if path.lower().endswith(".svg"):
+            print("Output file must not be an SVG file.")
+            continue
         if os.path.exists(path):
             answer = input(f"'{path}' already exists. Overwrite? (y/n): ")
             if "y" in answer.lower():
