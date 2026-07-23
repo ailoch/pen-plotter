@@ -1,6 +1,5 @@
 import math
 from abc import ABC, abstractmethod
-from typing import Self
 from dataclasses import dataclass, field
 from scipy.integrate import quad
 from lib.settings import LineType
@@ -30,29 +29,31 @@ class Transform:
     def __repr__(self):
         return f"Transform(matrix={self.matrix!r})"
 
-    def __matmul__(self, other: list[float] | Self):
-        if isinstance(other, list):
-            return Transform(self._getTransform(other))
-        else:
-            return Transform(self._getTransform(other.matrix))
+    # extracts a 6-element matrix from a Transform or a list/tuple[float] of length 6,
+    # or None if other is neither
+    @staticmethod
+    def _coerceMatrix(other: object) -> list[float] | None:
+        if isinstance(other, Transform):
+            return other.matrix
+        if isinstance(other, (list, tuple)) and len(other) == 6 and all(isinstance(v, (int, float)) for v in other):
+            return list(other)
+        return None
 
-    def __imatmul__(self, other: list[float] | Self):
-        if isinstance(other, list):
-            return Transform(self._getTransform(other))
-        else:
-            return Transform(self._getTransform(other.matrix))
+    def __matmul__(self, other: object):
+        matrix = self._coerceMatrix(other)
+        if matrix is None:
+            return NotImplemented
+        return Transform(self._getTransform(matrix))
 
-    def __mul__(self, other: list[float] | Self):
-        if isinstance(other, list):
-            return Transform(self._getReverseTransform(other))
-        else:
-            return Transform(self._getReverseTransform(other.matrix))
+    __imatmul__ = __matmul__
 
-    def __imul__(self, other: list[float] | Self):
-        if isinstance(other, list):
-            return Transform(self._getReverseTransform(other))
-        else:
-            return Transform(self._getReverseTransform(other.matrix))
+    def __mul__(self, other: object):
+        matrix = self._coerceMatrix(other)
+        if matrix is None:
+            return NotImplemented
+        return Transform(self._getReverseTransform(matrix))
+
+    __imul__ = __mul__
 
     def _getTransform(self, other: list[float]):
         return [
