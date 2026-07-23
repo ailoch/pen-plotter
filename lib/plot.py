@@ -288,8 +288,9 @@ def _splitAtBounds(segment: Line | Arc, bounds: tuple[float, float, float, float
         return [(segment, runs[0][2])]
     return [(_subsegment(segment, t0, t1), isIn) for t0, t1, isIn in runs]
 
-def _addPath(state: _DrawState, settings: Settings, object: PathObject, file: TextIO, raised: bool = False):
+def _addPath(state: _DrawState, settings: Settings, object: PathObject, file: TextIO, raised: bool = False, outOfBoundsNames: list[str] | None = None):
     bounds = _canvasBoundsNozzle(settings)
+    droppedThisObject = False
     for path in object.geometry:
         # RAW_GEOMETRY is a source for stroke/fill generation, never drawn itself
         if path.lineType == LineType.RAW_GEOMETRY:
@@ -318,10 +319,14 @@ def _addPath(state: _DrawState, settings: Settings, object: PathObject, file: Te
             for piece, isIn in _splitAtBounds(segment, bounds):
                 if isIn:
                     _emitSegment(state, settings, piece, file, lineType, raised)
-                elif settings.showOutOfBounds:
-                    _emitSegment(state, settings, piece, file, LineType.INVALID, raised)
-                # else: crop mode - drop the out-of-bounds piece; the next surviving
-                # piece's leading _penMove(travel=True) naturally bridges the gap
+                else:
+                    if not droppedThisObject and outOfBoundsNames is not None:
+                        outOfBoundsNames.append(object.id)
+                        droppedThisObject = True
+                    if settings.showOutOfBounds:
+                        _emitSegment(state, settings, piece, file, LineType.INVALID, raised)
+                    # else: crop mode - drop the out-of-bounds piece; the next surviving
+                    # piece's leading _penMove(travel=True) naturally bridges the gap
     if settings.showBoundingBoxes:
         for path in object.geometry:
             for segment in path.segments:
@@ -483,10 +488,11 @@ def createFile(geom: Document, settings: Settings, fileOut: str) -> bool:
             destFile.write("\n")
 
             objectCount = 0
+            outOfBoundsNames: list[str] = []
             for object in geom.objects:
                 if settings.objectHeightChange and settings.layerChangeMessage != "":
                     destFile.write(settings.layerChangeMessage + "\n\n")
-                _addPath(state, settings, object, destFile, objectCount % 2 == 0 and settings.objectHeightChange)
+                _addPath(state, settings, object, destFile, objectCount % 2 == 0 and settings.objectHeightChange, outOfBoundsNames)
                 objectCount += 1
             if settings.showBoundingBoxes:
                 _moveRect(state, settings, geom.bounds(), destFile, LineType._DOCUMENT_BOUNDS)
@@ -496,6 +502,9 @@ def createFile(geom: Document, settings: Settings, fileOut: str) -> bool:
                 _fileAppend(srcFile, destFile, replace)
         os.replace(tempPath, fileOut)
         tempPath = None
+        if outOfBoundsNames:
+            action = "Marked as invalid" if settings.showOutOfBounds else "Cropped"
+            print(f"\n{action} lines outside the canvas in: {', '.join(outOfBoundsNames)}")
         return True
     except PermissionError as e:
         # os.replace(tempPath, fileOut) reports its src (tempPath) as e.filename
