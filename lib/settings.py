@@ -66,7 +66,7 @@ class Settings:
     accels: dict[LineType, float] = field(default_factory=lambda: {LineType.TRAVEL: 1000})
     shortTravelThresholds: dict[LineType, float] = field(default_factory=lambda: {LineType.STROKE: .5, LineType.INFILL: .5, LineType.GAP_INFILL: .5})
     loadDelay: float = 20
-    eAxisMultiplier: float = 1.0 # scales every emitted E value - works around P1S firmware throttling XY speed to the E-axis limits based on the raw commanded E, ignoring M221 S0 (see bug.gcode); side effect: the slicer's total-filament stat scales down by the same factor
+    eAxisMultiplier: float = 1.0 # scales every emitted E value - works around P1S firmware ignoring M221 Sxx entirely (extruder always turns the full commanded E), which makes the planner throttle XY speed to the raw commanded E rate; side effect: the slicer's total-filament stat scales down by the same factor
 
     # processing settings
     tessellationTolerance: float = .012

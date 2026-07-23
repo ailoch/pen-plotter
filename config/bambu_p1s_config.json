@@ -24,7 +24,7 @@
         "accels": {"draw": 10000, "travel": 20000}, // mm/s^2
         "shortTravelThresholds": {"draw": 0.5, "infill": 1, "gapInfill": 1}, // travel moves below this distance (mm) will not lift the pen
         "loadDelay": 5, // wait this long for user to load pen
-        "eAxisMultiplier": 0.05 // scales every emitted E value - works around P1S firmware throttling XY speed to the E-axis limits based on the raw commanded E, ignoring M221 S0 (see bug.gcode); side effect: the slicer's total-filament stat scales down by the same factor
+        "eAxisMultiplier": 0.05 // scales every emitted E value - works around P1S firmware ignoring M221 Sxx entirely (extruder always turns the full commanded E), which makes the planner throttle XY speed to the raw commanded E rate; side effect: the slicer's total-filament stat scales down by the same factor
     },
 
     // controls what is drawn on paper
