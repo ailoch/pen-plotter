@@ -98,6 +98,25 @@ def _fileAppend(srcFile: TextIO, destFile: TextIO, replace: dict[str, str | floa
             line = _TEMPLATE_BLOCK.sub(lambda m: _evalTemplateBlock(m.group(1), replace), line)
         destFile.write(line)
 
+# the next feature name in visualization.style == "segment"'s cycle, given the
+# previous one - shared by _addLine's real cycling and _addPath's lookahead (see
+# _skipRepeatedClosingColor)
+def _nextSegmentType(lastMoveType: str, segmentTypes: tuple[str, ...]) -> str:
+    if lastMoveType in segmentTypes:
+        idx = (segmentTypes.index(lastMoveType) + 1) % len(segmentTypes)
+        return segmentTypes[idx]
+    return segmentTypes[0]
+
+# if the closed path's last segment would naturally cycle back to firstColor (the
+# color its first segment got), mutate state.lastMoveType as if that repeated color
+# had already been drawn - no gcode is written for this synthetic tick, it only
+# shifts where the real draw call (right after this) starts its own cycle from, so
+# the last segment lands one color further out instead of repeating the first
+def _skipRepeatedClosingColor(state: _DrawState, settings: Settings, firstColor: str):
+    predicted = _nextSegmentType(state.lastMoveType, settings.segmentTypes)
+    if predicted == firstColor:
+        state.lastMoveType = predicted
+
 # adds a gcode line to the file with the specified arguments
 # param "accel" sets printer accel using m204 in seperate instruction
 def _addLine(state: _DrawState, settings: Settings, args: dict[str, str | float | None], file: TextIO, lineType: LineType | None = None):
@@ -133,12 +152,7 @@ def _addLine(state: _DrawState, settings: Settings, args: dict[str, str | float 
                         else:
                             feature = settings.instructionTypes[3]
                     case "segment":
-                        segmentTypes = settings.segmentTypes
-                        if state.lastMoveType in segmentTypes:
-                            idx = (segmentTypes.index(state.lastMoveType) + 1) % len(segmentTypes)
-                            feature = segmentTypes[idx]
-                        else:
-                            feature = segmentTypes[0]
+                        feature = _nextSegmentType(state.lastMoveType, settings.segmentTypes)
                 if feature != state.lastMoveType and "E" in args:
                     file.write(settings.styleChangeMessage % feature + "\n")
                     state.lastMoveType = feature # type: ignore
@@ -282,10 +296,25 @@ def _addPath(state: _DrawState, settings: Settings, object: PathObject, file: Te
             continue
         lineType = path.lineType
         tessellated = path.tessellate(settings.tessellationTolerance)
-        for segment in tessellated.segments:
+        segments = tessellated.segments
+
+        # style=="segment" cycles segmentTypes once per drawn segment with no notion
+        # of shape closure, so a closed path whose segment count doesn't divide evenly
+        # against len(segmentTypes) wraps its last segment back onto the same color as
+        # its first - which visually merges them, since they're adjacent. Predict the
+        # collision before drawing anything: if it'll happen, _skipRepeatedClosingColor
+        # pre-advances state.lastMoveType right before the real last-segment draw call,
+        # landing one color further out
+        firstSegColor = None
+        if settings.style == "segment" and len(segments) > 1 and len(settings.segmentTypes) > 1 and tessellated.isClosed():
+            firstSegColor = _nextSegmentType(state.lastMoveType, settings.segmentTypes)
+
+        for i, segment in enumerate(segments):
             if not isinstance(segment, (Line, Arc)):
                 print(f"Unknown path type {type(segment)}")
                 continue
+            if firstSegColor is not None and i == len(segments) - 1:
+                _skipRepeatedClosingColor(state, settings, firstSegColor)
             for piece, isIn in _splitAtBounds(segment, bounds):
                 if isIn:
                     _emitSegment(state, settings, piece, file, lineType, raised)

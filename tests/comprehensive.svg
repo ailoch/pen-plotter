@@ -604,6 +604,20 @@
        fill="black"
        fill-opacity="0.3"
        stroke="none" />
+    <!-- regular 7-gon, centered (202,196) absolute / (198,8) local, r~7 - a closed
+         path whose segment count (7) doesn't divide evenly into visualization's
+         default 6-entry segmentTypes list, so cycling naturally wraps the last
+         segment back onto the same color as the first (1-indexed: colors 1..6,1
+         under plain modular cycling - segments 1 and 7 are adjacent, since the path
+         is closed, so they'd visually merge into one long run). Exercises
+         lib/plot.py's _skipRepeatedClosingColor fix under visualization.style ==
+         "segment" (already enabled in the shipped config) -->
+    <polygon
+       id="heptagon-segment-color-wrap"
+       points="198.000,1.000 203.473,3.636 204.824,9.558 201.037,14.307 194.963,14.307 191.176,9.558 192.527,3.636"
+       fill="none"
+       stroke="black"
+       stroke-width="0.2" />
   </g>
   <!-- ======================================================================
        BAND 6: DEGENERATE / ROBUSTNESS  (band origin y=214)
