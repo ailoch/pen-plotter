@@ -140,6 +140,34 @@ def _polyTreeGroups(tree) -> list[tuple[list, list]]:
     walk(tree)
     return groups
 
+# even-odd (crossing-number) point-in-polygon test for a whole batch of points at once.
+# pts is an (N, 2) float array and poly an (M, 2) float array of one closed contour's
+# vertices (the closing edge is implied); returns an (N,) bool array, True for inside.
+# testing points one at a time through pyclipper.PointInPolygon costs O(M) per call from
+# Python and dominated gap fill on pieces with large contours; this resolves the whole
+# batch in a few numpy passes. points are processed in chunks so the (chunk, M)
+# intermediates stay bounded when a contour is big.
+def _pointsInPolygon(pts, poly):
+    import numpy as np
+    if len(poly) < 3 or len(pts) == 0:
+        return np.zeros(len(pts), dtype=bool)
+    px, py = poly[:, 0], poly[:, 1]
+    qx, qy = np.roll(px, -1), np.roll(py, -1)
+    dx, dy = qx - px, qy - py
+    out = np.zeros(len(pts), dtype=bool)
+    chunk = max(1, 4_000_000 // len(poly))
+    for lo in range(0, len(pts), chunk):
+        x = pts[lo:lo+chunk, 0][:, None]
+        y = pts[lo:lo+chunk, 1][:, None]
+        straddles = (py > y) != (qy > y) # edges crossing this point's horizontal ray
+        # x where each edge crosses that ray. the divide is only meaningful where the
+        # edge straddles (dy != 0 there); elsewhere it yields inf/nan, which the
+        # straddles mask discards - and a nan comparison is False anyway
+        with np.errstate(divide="ignore", invalid="ignore"):
+            xCross = px + dx * (y - py) / dy
+        out[lo:lo+chunk] = np.logical_xor.reduce(straddles & (x < xCross), axis=1)
+    return out
+
 # approximates the medial axis (skeleton) of one residue piece (outer contour + holes,
 # clipper-int space) as a set of open polylines (mm-space complex points). a piece that
 # is at most `spacing` wide everywhere is fully inked by a single pen pass tracing its
@@ -180,32 +208,29 @@ def _medialAxisLines(outer: list, holes: list, spacing: float, tolerance: float)
     verts = vor.vertices
 
     # a Voronoi vertex is on the medial axis only if it lies strictly inside the piece
-    # (inside the outer contour and outside every hole). Voronoi vertices seeded by
-    # near-boundary sites can sit arbitrarily far out (near-infinite finite coords), so
-    # bbox-gate first - it both skips the obvious outsiders and keeps those huge values
-    # from overflowing PointInPolygon's 64-bit clipper ints.
-    xs = [p[0] for p in outer]; ys = [p[1] for p in outer]
-    minX, maxX, minY, maxY = min(xs), max(xs), min(ys), max(ys)
-    insideCache: dict[int, bool] = {}
-    def vinside(idx: int) -> bool:
-        assert pyclipper is not None
-        if idx < 0:
-            return False
-        cached = insideCache.get(idx)
-        if cached is None:
-            vx, vy = verts[idx][0], verts[idx][1]
-            if not (minX <= vx <= maxX and minY <= vy <= maxY):
-                cached = False
-            else:
-                p = (int(round(vx)), int(round(vy)))
-                cached = pyclipper.PointInPolygon(p, outer) == 1 and all(pyclipper.PointInPolygon(p, h) == 0 for h in holes)
-            insideCache[idx] = cached
-        return cached
+    # (inside the outer contour and outside every hole) - resolved for every vertex in one
+    # vectorised pass (see _pointsInPolygon). Voronoi vertices seeded by near-boundary
+    # sites can sit arbitrarily far out (near-infinite finite coords), so bbox-gate first:
+    # it skips the obvious outsiders and keeps those huge values out of the arithmetic.
+    outerArr = np.asarray(outer, dtype=float)
+    minX, minY = outerArr.min(axis=0)
+    maxX, maxY = outerArr.max(axis=0)
+    inBox = ((verts[:, 0] >= minX) & (verts[:, 0] <= maxX)
+             & (verts[:, 1] >= minY) & (verts[:, 1] <= maxY))
+    inside = np.zeros(len(verts), dtype=bool)
+    if inBox.any():
+        candidates = verts[inBox]
+        ok = _pointsInPolygon(candidates, outerArr)
+        for h in holes:
+            if not ok.any():
+                break
+            ok &= ~_pointsInPolygon(candidates, np.asarray(h, dtype=float))
+        inside[inBox] = ok
 
     # build the skeleton graph from the interior Voronoi ridges
     adj: dict[int, set[int]] = {}
     for a, b in vor.ridge_vertices:
-        if a < 0 or b < 0 or not (vinside(a) and vinside(b)):
+        if a < 0 or b < 0 or not (inside[a] and inside[b]):
             continue
         adj.setdefault(a, set()).add(b)
         adj.setdefault(b, set()).add(a)
