@@ -10,6 +10,13 @@ except ImportError:
 
 _SCALE = 1e5 # pyclipper needs integer coordinates; this gives ~10nm precision at mm scale
 
+# how finely a residue piece's boundary is resampled before its medial axis is taken
+# the sample pitch sets how well the Voronoi approximates the true skeleton, and drives
+# the cost of the whole gap-fill path. counter-intuitively, sampling too coarsely costs
+# *more* downstream: the skeleton comes back jittery, which both loses coverage and defeats
+# the arc fitter, so it emits many short segments instead of a few long arcs
+_MEDIAL_SAMPLE_DIVISOR = 6
+
 # how finely JT_ROUND flattens its fillet arcs on the DRAWN loops. pyclipper's default
 # (0.25 scaled units ~ 2.5nm here) is far finer than tolerance needs and floods each
 # loop with points that tessellate() then has to re-fit; tol/4 keeps fillet deviation
@@ -150,8 +157,8 @@ def _medialAxisLines(outer: list, holes: list, spacing: float, tolerance: float)
 
     contours = [outer] + holes
     # densely resample the boundary: the medial axis is only as accurate as the site
-    # spacing, so cap each edge at ~spacing/4 (in clipper units)
-    maxEdge = max(spacing / 4 * _SCALE, 1.0)
+    # spacing, so cap each edge at spacing/_MEDIAL_SAMPLE_DIVISOR (in clipper units)
+    maxEdge = max(spacing / _MEDIAL_SAMPLE_DIVISOR * _SCALE, 1.0)
     samples: list[tuple[float, float]] = []
     for contour in contours:
         n = len(contour)
