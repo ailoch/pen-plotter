@@ -76,8 +76,8 @@ def _coverageBand(centerlines: list, delta: float):
     pco.AddPaths(centerlines, pyclipper.JT_SQUARE, pyclipper.ET_CLOSEDLINE)
     return pco.Execute(delta * _SCALE)
 
-# region boolean: subject minus every (non-empty) clip, nonzero fill. all args in
-# clipper-int space.
+# polygon region boolean: subject minus every (non-empty) clip, nonzero fill. all args
+# in clipper-int space.
 def _difference(subject: list, clips: list) -> list:
     assert pyclipper is not None
     pc = pyclipper.Pyclipper()
@@ -205,42 +205,108 @@ def _medialAxisLines(outer: list, holes: list, spacing: float, tolerance: float)
     if not adj:
         return None
 
-    # decompose the graph into maximal simple chains: each walk runs from an endpoint or
-    # junction (degree != 2) through degree-2 nodes until the next endpoint/junction, so
-    # a plain sliver yields one polyline and a Y-shaped piece yields three
-    used: set[tuple[int, int]] = set()
     def edgeKey(a: int, b: int) -> tuple[int, int]:
         return (a, b) if a < b else (b, a)
-    def walk(start: int, nxt: int) -> list[int]:
-        chain = [start]
-        prev, cur = start, nxt
-        while True:
-            chain.append(cur)
-            used.add(edgeKey(prev, cur))
-            onward = [x for x in adj[cur] if x != prev and edgeKey(cur, x) not in used]
-            if len(adj[cur]) == 2 and len(onward) == 1:
-                prev, cur = cur, onward[0]
-            else:
-                break
-        return chain
+    def edgeLen(a: int, b: int) -> float: # mm
+        return math.hypot(verts[b][0] - verts[a][0], verts[b][1] - verts[a][1]) / _SCALE
+
+    # prune short leaf spurs. a Voronoi skeleton of a densely-resampled boundary sheds a
+    # lot of tiny ridges around every corner and junction; drawn literally, each becomes
+    # its own routed subpath and pen lift for a stroke a fraction of a pen width long. a
+    # spur runs from a tip (degree 1) to a junction (degree >= 3), and that junction is
+    # already inked with radius spacing/2, so a spur shorter than that lays down no ink
+    # the neighbouring stroke doesn't already cover. repeat a bounded number of rounds,
+    # since removing one spur can expose another a level in.
+    spurLimit = spacing / 2
+    for _ in range(16):
+        removed = False
+        for tip in [nd for nd in adj if len(adj[nd]) == 1]:
+            if tip not in adj or len(adj[tip]) != 1:
+                continue # already consumed by an earlier removal this round
+            # walk inward from the tip through degree-2 nodes to the first branch point
+            chain = [tip]
+            prev, cur = tip, next(iter(adj[tip]))
+            length = edgeLen(tip, cur)
+            while len(adj[cur]) == 2:
+                nxt = next(x for x in adj[cur] if x != prev)
+                chain.append(cur)
+                length += edgeLen(cur, nxt)
+                prev, cur = cur, nxt
+            # a walk ending on another tip is a whole standalone component, not a spur -
+            # keep it (dropping it would leave that residue piece with no stroke at all)
+            if len(adj[cur]) < 3 or length >= spurLimit:
+                continue
+            chain.append(cur) # the junction itself survives; only the spur unlinks
+            for k in range(len(chain) - 1):
+                adj[chain[k]].discard(chain[k+1])
+                adj[chain[k+1]].discard(chain[k])
+            for nd in chain[:-1]:
+                if not adj.get(nd):
+                    adj.pop(nd, None)
+            removed = True
+        if not removed:
+            break
+    adj = {nd: nbrs for nd, nbrs in adj.items() if nbrs}
+    if not adj:
+        return None
+
+    # decompose into strokes, carrying on THROUGH junctions: ending a stroke at every
+    # branch point would split one continuous spine into several subpaths (more pen
+    # lifts, and a much larger item count for the router to sort). instead, at each node
+    # take whichever unused branch best continues the current heading, so a spine stays
+    # one stroke and only genuine side branches start new ones. every edge is still
+    # drawn exactly once.
+    remaining: set[tuple[int, int]] = {edgeKey(nd, nb) for nd, nbrs in adj.items() for nb in nbrs}
+
+    # unit vector from a to b (zero for coincident vertices), as a complex to match how
+    # positions are represented everywhere else - the dot product of two of these is then
+    # just (u * v.conjugate()).real
+    def direction(a: int, b: int) -> complex:
+        d = complex(verts[b][0] - verts[a][0], verts[b][1] - verts[a][1])
+        return d / abs(d) if d else 0j
+
+    def liveCount(nd: int) -> int:
+        return sum(1 for nb in adj[nd] if edgeKey(nd, nb) in remaining)
 
     chains: list[list[int]] = []
-    for node in list(adj):
-        if len(adj[node]) != 2:
-            for nb in list(adj[node]):
-                if edgeKey(node, nb) not in used:
-                    chains.append(walk(node, nb))
-    # any edges left over belong to pure cycles (all nodes degree 2)
-    for node in list(adj):
-        for nb in list(adj[node]):
-            if edgeKey(node, nb) not in used:
-                chains.append(walk(node, nb))
+    while remaining:
+        # start at a tip where possible (a stroke should begin at a free end), then a
+        # junction, then anywhere left - the last case being a pure cycle, which has no
+        # natural start
+        startNode = None
+        for wanted in (1, 3, 0): # 1 = tip, 3 = junction (degree >= 3), 0 = anything
+            for nd in adj:
+                if liveCount(nd) and (len(adj[nd]) == wanted if wanted == 1 else len(adj[nd]) >= wanted):
+                    startNode = nd
+                    break
+            if startNode is not None:
+                break
+        if startNode is None:
+            break
+
+        chain = [startNode]
+        # a zero heading means "no preferred direction", which scores every option 0 on
+        # the first step - max() then returns the first candidate, so the opening edge
+        # needs no special case
+        cur, heading = startNode, 0j
+        while True:
+            options = [nb for nb in adj[cur] if edgeKey(cur, nb) in remaining]
+            if not options:
+                break
+            # straightest continuation - largest dot product with the current heading
+            nxt = max(options, key=lambda nb: (direction(cur, nb) * heading.conjugate()).real)
+            remaining.discard(edgeKey(cur, nxt))
+            chain.append(nxt)
+            heading = direction(cur, nxt)
+            cur = nxt
+        if len(chain) > 1:
+            chains.append(chain)
 
     lines: list[list[complex]] = []
     for chain in chains:
         poly = [complex(verts[i][0] / _SCALE, verts[i][1] / _SCALE) for i in chain]
         length = sum(abs(poly[i + 1] - poly[i]) for i in range(len(poly) - 1))
-        if length > tolerance: # drop numeric-noise spurs
+        if length > tolerance: # drop numeric-noise fragments
             lines.append(poly)
     return lines or None
 
