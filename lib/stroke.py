@@ -1,7 +1,7 @@
 import copy, math
 from lib.geometry import Document
 from lib.settings import LineType, Settings
-from lib.infill import _SCALE, _appendLoop, _drawArcTolerance, _joinType, _toClipperPath
+from lib.infill import _SCALE, _appendLoop, _coverageBand, _difference, _drawArcTolerance, _drawResidue, _joinType, _toClipperPath
 
 try:
     import pyclipper
@@ -62,14 +62,22 @@ def generateStroke(document: Document, settings: Settings):
         deltas = _passDeltas(numPasses, s)
         joinType = _joinType(style.linejoin)
 
+        # the ink laid down by every pass of this object, and the true stroke band it is
+        # meant to fill, both in clipper-int space - diffed after the loop to find what
+        # the passes missed (see below). spacing <= 0 has no coverage width to measure
+        # against, so there's nothing to detect
+        needResidue = settings.generateGapInfill and spacing > 0
+        drawn: list = []
+        bands: list = []
+
         for p in rawSubpaths:
             if centerPassNeeded:
                 centerPass = copy.deepcopy(p)
                 centerPass.lineType = LineType.STROKE
                 obj.geometry.append(centerPass)
 
-            if not deltas:
-                continue
+            if not deltas and not needResidue:
+                continue # hairline stroke with nothing to check - the center pass is all of it
 
             # closed paths omit the duplicate end point, open ones include it - both
             # match pyclipper's expectation for AddPath
@@ -78,15 +86,20 @@ def generateStroke(document: Document, settings: Settings):
             clipperPath = _toClipperPath(vertices)
             if len(clipperPath) < 2:
                 continue
+            if centerPassNeeded:
+                drawn.append(clipperPath) # the flattened form of the center pass just appended
 
             # closed -> ET_CLOSEDLINE; open -> pyclipper's open-line end type per style.linecap
             endType = pyclipper.ET_CLOSEDLINE if closed else {"round": pyclipper.ET_OPENROUND, "square": pyclipper.ET_OPENSQUARE}.get(style.linecap, pyclipper.ET_OPENBUTT) # default / "butt"
 
+            # one offsetter per subpath, Execute'd at each pass delta in turn (and at
+            # strokeWidth/2 for the band) - the loaded path is the same every time
+            pco = pyclipper.PyclipperOffset()
+            pco.ArcTolerance = _drawArcTolerance(tolerance)
+            pco.MiterLimit = style.miterlimit
+            pco.AddPath(clipperPath, joinType, endType)
+
             for delta in deltas:
-                pco = pyclipper.PyclipperOffset()
-                pco.ArcTolerance = _drawArcTolerance(tolerance)
-                pco.MiterLimit = style.miterlimit
-                pco.AddPath(clipperPath, joinType, endType)
                 try:
                     # positive delta grows outward from the centerline - a closed
                     # path's ET_CLOSEDLINE offset yields both the outer ring and the
@@ -98,6 +111,28 @@ def generateStroke(document: Document, settings: Settings):
                     continue
                 for contour in result:
                     _appendLoop(obj.geometry, contour, LineType.STROKE, tolerance)
+                drawn.extend(result)
+
+            # the stroke band itself: the shape SVG would have painted solid, offset with
+            # the same join/cap/miterlimit the passes used so its edges line up with theirs
+            if needResidue:
+                try:
+                    bands.extend(pco.Execute(style.strokeWidth / 2 * _SCALE))
+                except pyclipper.ClipperException as e:
+                    print(f"Warning: pyclipper stroke band offset failed for object {obj.id!r} ({e}); skipping its gap fill")
+
+        # the passes tile the band evenly, but at a join sharp enough for the miterlimit
+        # to bevel the spike, each pass gets clipped at a different point and they fan
+        # apart faster than spacing - leaving wedges the ink never reaches (likewise
+        # inside a curve tighter than strokeWidth/2, where the inner offsets collapse).
+        # residue = band - ink, drawn as centerline strokes, same as an infill ring's
+        if bands:
+            try:
+                residue = _difference(bands, [_coverageBand(drawn, spacing / 2)])
+            except pyclipper.ClipperException as e:
+                print(f"Warning: pyclipper stroke residue detection failed for object {obj.id!r} ({e}); skipping its gap fill")
+                residue = []
+            _drawResidue(obj.geometry, residue, spacing, tolerance, str(obj.id))
 
 # removes RAW_GEOMETRY paths from every object's geometry (they've served their
 # purpose as a stroke/fill source and would otherwise confuse the router - a path
