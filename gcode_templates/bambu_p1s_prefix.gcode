@@ -106,7 +106,7 @@ G380 S2 Z-25 F300
 G90 ; abs pos
 M17 X1.2 Y1.2 Z0.75 ; reset motor current to default
 M220 S100 ; reset feedrate
-M221 S0 ; disable e-axis
+M221 S10 ; reduce e-axis magnitude (10% is the P1S firmware's minimum accepted value; below it the command is silently discarded)
 M73.2 R1 ; reset time left magnitude
 M1002 set_gcode_claim_speed_level : 5
 G29.1 Z0 ; clear z-trim value
