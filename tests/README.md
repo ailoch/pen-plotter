@@ -25,6 +25,7 @@ build geometry directly and assert behaviour with a specific right answer.
 |------|-------|--------|
 | `test_smoke.py` | cross-cutting | Full pipeline over every fixture + `testDrawing.svg`: completes without exception, emits non-trivial gcode, rejects the two deliberately-invalid SVGs, leaves no `RAW_GEOMETRY` alive past `dropRawGeometry`, and confirms every surviving `LineType` has `heights`/`speeds`/`accels` entries. Asserts nothing about gcode *content* — speeds, spacing and routing all legitimately change it |
 | `test_coverage.py` | cross-cutting | The coverage invariant: for each object, `fill region ∪ stroke band − ink(all drawn centerlines swept ±fillSpacing/2)` leaves nothing thicker than `GAP_HALF_WIDTH_FRACTION × fillSpacing`. The target region is recomputed independently rather than reused from `generateInfill`, so a bug there can't define its own expected answer. Also asserts `generateGapInfill` measurably improves coverage, guarding against the residue pass silently becoming a no-op |
+| `test_infill.py` | `lib/infill.py` | Fill-rule handling on a hand-built donut (square ring inside a square, both wound the same way): `nonzero` treats the middle as solid, `evenodd` as a hole. Asserts nonzero lays down strictly more ink *and* that ink lands inside the middle for nonzero but never for evenodd — a directional pair, so swapping the two rules fails rather than passing on "they differ" |
 
 Status tags used in the SVG comments:
 
