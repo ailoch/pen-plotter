@@ -1,0 +1,8 @@
+// Deliberately malformed - exercises initFromJson's parse-error path.
+// The "machine" section's opening brace is never closed and startPos is
+// missing a comma, so commentjson's tokenizer fails outright.
+{
+    "machine": {
+        "startPos": [0 0, 10]
+        "penOffset": [1, 2],
+}

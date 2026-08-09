@@ -1,0 +1,7 @@
+// Valid JSON, wrong *shape*: settings must be an object of sections, each of
+// which is itself an object. Here "machine" is a list and "processing" is a
+// scalar, so there are no settingName/value pairs to read at all.
+{
+    "machine": [1, 2, 3],
+    "processing": 5
+}

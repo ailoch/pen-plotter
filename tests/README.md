@@ -24,8 +24,14 @@ build geometry directly and assert behaviour with a specific right answer.
 | File | Scope | Covers |
 |------|-------|--------|
 | `test_smoke.py` | cross-cutting | Full pipeline over every fixture + `testDrawing.svg`: completes without exception, emits non-trivial gcode, rejects the two deliberately-invalid SVGs, leaves no `RAW_GEOMETRY` alive past `dropRawGeometry`, and confirms every surviving `LineType` has `heights`/`speeds`/`accels` entries. Asserts nothing about gcode *content* — speeds, spacing and routing all legitimately change it |
-| `test_coverage.py` | cross-cutting | The coverage invariant: for each object, `fill region ∪ stroke band − ink(all drawn centerlines swept ±fillSpacing/2)` leaves nothing thicker than `GAP_HALF_WIDTH_FRACTION × fillSpacing`. The target region is recomputed independently rather than reused from `generateInfill`, so a bug there can't define its own expected answer. Also asserts `generateGapInfill` measurably improves coverage, guarding against the residue pass silently becoming a no-op |
-| `test_infill.py` | `lib/infill.py` | Fill-rule handling on a hand-built donut (square ring inside a square, both wound the same way): `nonzero` treats the middle as solid, `evenodd` as a hole. Asserts nonzero lays down strictly more ink *and* that ink lands inside the middle for nonzero but never for evenodd — a directional pair, so swapping the two rules fails rather than passing on "they differ" |
+| `test_coverage.py` | cross-cutting | The coverage invariant: for every object, the region SVG would paint (fill region + stroke band, recomputed independently of `generateInfill`) minus every drawn centerline swept by ±`fillSpacing/2` leaves nothing thicker than `GAP_HALF_WIDTH_FRACTION` — a known-issues baseline sitting just above today's worst gap. Also asserts disabling `generateGapInfill` measurably worsens coverage, so the residue pass can't become a silent no-op. Marked `slow` |
+| `test_infill.py` | per-module | Fill-rule resolution: the same wound-alike donut fills solid under `nonzero` and leaves a hole under `evenodd`. A matched pair — together they imply the rules differ, so no separate inequality test is needed |
+| `test_settings.py` | per-module | `Settings.initFromJson`: fallback to defaults on a missing/malformed/wrong-shape file, the containment warnings, `"draw"` expansion and per-role override, the mm/s→mm/min conversions, alignment resolution to a lower-left offset, and that every wrongly-typed setting is both skipped *and* reported. Config fixtures live in `configs/` |
+
+Config fixtures for `test_settings.py` live in `configs/`: `invalid.json`
+(malformed), `not-sections.json` (valid JSON, wrong shape) and
+`wrong-types.json` (every setting named correctly and typed wrongly). Cases that
+are about a *value* rather than the file are built inline in the test.
 
 Status tags used in the SVG comments:
 
