@@ -58,14 +58,15 @@ class Settings:
     canvasOffset: complex = 0 # offset from origin of the canvas's lower-left corner, in pen space
     canvasAlignment: str = "BL" # which plate corner canvasOffset is measured from ("BL"/"BR"/"TL"/"TR") - see Alignment & Scaling in CLAUDE.md
 
-    maxVerticalSpeed: float = 600 # mm/min - most printers' Z axis is slower than X/Y, so the router assumes min(speeds[travel], maxVerticalSpeed) when costing a travel's pen lift/lower
+    # deliberately a float - the parsing logic would assume float values are invalid if this was an int
+    maxVerticalSpeed: float = 600.0 # mm/min - most printers' Z axis is slower than X/Y, so the router assumes min(speeds[travel], maxVerticalSpeed) when costing a travel's pen lift/lower
 
     # motion settings
     heights: dict[LineType, float] = field(default_factory=lambda: {LineType.STROKE: 0, LineType.INFILL: 0, LineType.GAP_INFILL: 0, LineType.INVALID: 0, LineType.TRAVEL: 10})
     speeds: dict[LineType, float] = field(default_factory=lambda: {LineType.TRAVEL: 3000})
     accels: dict[LineType, float] = field(default_factory=lambda: {LineType.TRAVEL: 1000})
     shortTravelThresholds: dict[LineType, float] = field(default_factory=lambda: {LineType.STROKE: .5, LineType.INFILL: .5, LineType.GAP_INFILL: .5})
-    loadDelay: float = 20
+    loadDelay: float = 20.0
     eAxisMultiplier: float = 1.0 # scales every emitted E value - reduces the raw commanded E rate the P1S planner throttles XY speed against (see CLAUDE.md's Hardware section for the full mechanism, including M221's role); side effect: the slicer's total-filament stat scales down by the same factor
 
     # processing settings
