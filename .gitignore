@@ -5,3 +5,4 @@
 !gcode_templates/*.gcode
 !tests/*.svg
 __pycache__/
+.pytest_cache/

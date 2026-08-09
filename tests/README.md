@@ -1,9 +1,29 @@
-# Test drawings
+# Tests
 
-Fixtures for exercising the SVG → gcode pipeline. Every element carries an `id`
-naming **what it tests**; the parser prints that `id` when it drops an
-unsupported element (`Ignored <type> with name <id>`) or warns about text, so a
-dropped case is self-identifying in the console.
+Automated tests (pytest) plus the SVG fixtures they and manual inspection run
+against. Every fixture element carries an `id` naming **what it tests**; the
+parser prints that `id` when it drops an unsupported element (`Ignored <type>
+with name <id>`) or warns about text, so a dropped case is self-identifying in
+the console.
+
+## Running
+
+```sh
+py -3 -m pytest              # everything, ~40s
+py -3 -m pytest -m "not slow"  # smoke only, ~20s
+```
+
+`git config core.hooksPath .githooks` enables [`.githooks/pre-push`](../.githooks/pre-push),
+which runs the suite before any push (commits stay unhooked; `git push
+--no-verify` bypasses).
+
+Tests come in two shapes. **Cross-cutting** suites run the real pipeline and
+assert a property that spans modules; **per-module** suites (`test_<module>.py`)
+build geometry directly and assert behaviour with a specific right answer.
+
+| File | Scope | Covers |
+|------|-------|--------|
+| `test_smoke.py` | cross-cutting | Full pipeline over every fixture + `testDrawing.svg`: completes without exception, emits non-trivial gcode, rejects the two deliberately-invalid SVGs, leaves no `RAW_GEOMETRY` alive past `dropRawGeometry`, and confirms every surviving `LineType` has `heights`/`speeds`/`accels` entries. Asserts nothing about gcode *content* — speeds, spacing and routing all legitimately change it |
 
 Status tags used in the SVG comments:
 
