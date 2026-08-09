@@ -24,6 +24,7 @@ build geometry directly and assert behaviour with a specific right answer.
 | File | Scope | Covers |
 |------|-------|--------|
 | `test_smoke.py` | cross-cutting | Full pipeline over every fixture + `testDrawing.svg`: completes without exception, emits non-trivial gcode, rejects the two deliberately-invalid SVGs, leaves no `RAW_GEOMETRY` alive past `dropRawGeometry`, and confirms every surviving `LineType` has `heights`/`speeds`/`accels` entries. Asserts nothing about gcode *content* — speeds, spacing and routing all legitimately change it |
+| `test_coverage.py` | cross-cutting | The coverage invariant: for each object, `fill region ∪ stroke band − ink(all drawn centerlines swept ±fillSpacing/2)` leaves nothing thicker than `GAP_HALF_WIDTH_FRACTION × fillSpacing`. The target region is recomputed independently rather than reused from `generateInfill`, so a bug there can't define its own expected answer. Also asserts `generateGapInfill` measurably improves coverage, guarding against the residue pass silently becoming a no-op |
 
 Status tags used in the SVG comments:
 
