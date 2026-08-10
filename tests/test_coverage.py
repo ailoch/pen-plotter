@@ -80,23 +80,99 @@ def _fillRegionOf(rawSubpaths, style, tolerance):
     return pc.Execute(pyclipper.CT_UNION, fillType, fillType)
 
 
+def _dashedPolylines(pts, pattern, dashoffset):
+    """The inked pieces of a flat polyline, as [[complex, ...], ...].
+
+    Deliberately NOT lib.stroke's _applyDash. This function decides what the answer
+    SHOULD be, so it has to reach it by different means: it walks a fully flattened
+    polyline accumulating straight-line distances and interpolates linearly to land
+    on a dash boundary, where the real one splits exact Line/Arc segments by their
+    own parameter via subsegment(). Only Style.dashPattern() is shared, and that is
+    pure normalization (odd-length repetition, all-zero -> solid), not the walk.
+
+    The seam merge the real walk does on closed paths is deliberately NOT replicated:
+    leaving a closed path's wrapping dash as two capped pieces yields a band strictly
+    contained in the merged one (two butt caps at a corner vs. a join that also covers
+    the wedge between them), so the target stays a subset of the real ink and can't
+    manufacture a false gap.
+    """
+    period = sum(pattern)
+    total = sum(abs(pts[i + 1] - pts[i]) for i in range(len(pts) - 1))
+    if period <= 0 or total <= 0:
+        return [pts]
+
+    # on/off spans in arc length, starting `into` before the path so the path begins
+    # partway through whichever interval covers its start
+    spans = []
+    cursor = -(dashoffset % period)
+    i = 0
+    while cursor < total:
+        end = cursor + pattern[i]
+        if i % 2 == 0:
+            a, b = max(cursor, 0.0), min(end, total)
+            if b > a:
+                spans.append((a, b))
+        cursor = end
+        i = (i + 1) % len(pattern)
+
+    # walk the polyline once, emitting the points that fall in each span
+    out = []
+    for a, b in spans:
+        piece, walked = [], 0.0
+        for j in range(len(pts) - 1):
+            p0, p1 = pts[j], pts[j + 1]
+            segLen = abs(p1 - p0)
+            if segLen <= 0:
+                continue
+            segEnd = walked + segLen
+            if segEnd > a and walked < b:
+                t0 = max(a - walked, 0.0) / segLen
+                t1 = min(b - walked, segLen) / segLen
+                start = p0 + (p1 - p0) * t0
+                stop = p0 + (p1 - p0) * t1
+                if not piece:
+                    piece.append(start)
+                piece.append(stop)
+            walked = segEnd
+        if len(piece) >= 2:
+            out.append(piece)
+    return out
+
+
 def _strokeBandOf(rawSubpaths, style, tolerance):
-    """The area SVG would paint as stroke - the outline grown by strokeWidth/2."""
+    """The area SVG would paint as stroke - the outline grown by strokeWidth/2.
+
+    For a dashed stroke that's only the dashes' own bands: the gaps between them are
+    bare paper by design, and counting them as target would report every gap as an
+    ink failure.
+    """
     if style.strokeColor is None or style.strokeWidth <= 0:
         return []
     band = []
     capType = {"round": pyclipper.ET_OPENROUND, "square": pyclipper.ET_OPENSQUARE}.get(
         style.linecap, pyclipper.ET_OPENBUTT
     )
+    pattern = style.dashPattern()
     for p in rawSubpaths:
-        pts = _toClipperPath(p.tessellate(tolerance, allowArcs=False).vertices())
-        if len(pts) < 2:
-            continue
-        pco = pyclipper.PyclipperOffset()
-        pco.MiterLimit = style.miterlimit
-        endType = pyclipper.ET_CLOSEDLINE if p.isClosed() else capType
-        pco.AddPath(pts, _joinType(style.linejoin), endType)
-        band.extend(pco.Execute(style.strokeWidth / 2 * _SCALE))
+        verts = p.tessellate(tolerance, allowArcs=False).vertices()
+        if pattern:
+            # vertices() drops a closed path's duplicate end point, but the dash walk
+            # has to travel the closing edge too, so put it back
+            if p.isClosed() and verts and verts[0] != verts[-1]:
+                verts = verts + [verts[0]]
+            pieces = [(sub, False) for sub in _dashedPolylines(verts, pattern, style.dashoffset)]
+        else:
+            pieces = [(verts, p.isClosed())]
+
+        for sub, closed in pieces:
+            pts = _toClipperPath(sub)
+            if len(pts) < 2:
+                continue
+            pco = pyclipper.PyclipperOffset()
+            pco.MiterLimit = style.miterlimit
+            endType = pyclipper.ET_CLOSEDLINE if closed else capType
+            pco.AddPath(pts, _joinType(style.linejoin), endType)
+            band.extend(pco.Execute(style.strokeWidth / 2 * _SCALE))
     return band
 
 

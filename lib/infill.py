@@ -421,7 +421,7 @@ def _drawResidue(geometry: list[Path], residue: list, spacing: float, tolerance:
 # fills one resolved fill region (clipper-int space) by tiling concentric rings inward
 # and, at every ring, drawing centerline strokes over whatever that ring's ink misses -
 # so the fill is coverage-complete by construction rather than relying on a global
-# post-pass. results are appended to geometry as INFILL loops + GAP_INFILL strokes.
+# post-pass. results are appended to geometry as `lineType` loops + GAP_INFILL strokes.
 #
 # insets are measured from the region boundary. ring k's centerline sits at
 # d0 + k*spacing (d0 = firstDelta), inking the band [d0+k*s - s/2, d0+k*s + s/2]. the
@@ -432,7 +432,7 @@ def _drawResidue(geometry: list[Path], residue: list, spacing: float, tolerance:
 # centerline strokes. successive annuli abut exactly (annulusInner_k == annulusOuter_k+1),
 # so the region is tiled with no seams and no double bookkeeping. drawResidue is skipped
 # when generateGapInfill is off (rings still tile).
-def _fillRegion(geometry: list[Path], region: list, spacing: float, firstDelta: float, tolerance: float, joinType, generateGapInfill: bool, objId: str):
+def _fillRegion(geometry: list[Path], region: list, spacing: float, firstDelta: float, tolerance: float, joinType, generateGapInfill: bool, objId: str, lineType: LineType = LineType.INFILL):
     assert pyclipper is not None
     s = spacing
     pco = pyclipper.PyclipperOffset()
@@ -466,7 +466,7 @@ def _fillRegion(geometry: list[Path], region: list, spacing: float, firstDelta: 
         carried = annulusInner if generateGapInfill else None
 
         for loopPts in ring:
-            _appendLoop(geometry, loopPts, LineType.INFILL, tolerance)
+            _appendLoop(geometry, loopPts, lineType, tolerance)
 
         if generateGapInfill:
             try:
@@ -478,6 +478,23 @@ def _fillRegion(geometry: list[Path], region: list, spacing: float, firstDelta: 
             _drawResidue(geometry, residue, s, tolerance, objId)
 
         k += 1
+
+# the area an object's fill would flood, resolved under its fill-rule, in clipper-int
+# space. Does NOT mutate obj - an unclosed fillable subpath is closed implicitly by
+# pyclipper's AddPaths(..., closed=True) rather than by appending a segment
+def _resolveFillRegion(obj, tolerance: float) -> list:
+    assert pyclipper is not None
+    fillable = [p for p in obj.geometry if p.lineType == LineType.RAW_GEOMETRY and p.isFillable()]
+    if not fillable:
+        return []
+    clipperPaths = [_toClipperPath(p.tessellate(tolerance, allowArcs=False).vertices()) for p in fillable]
+    clipperPaths = [p for p in clipperPaths if len(p) >= 3]
+    if not clipperPaths:
+        return []
+    fillType = pyclipper.PFT_EVENODD if obj.style.fillRule == "evenodd" else pyclipper.PFT_NONZERO
+    pc = pyclipper.Pyclipper()
+    pc.AddPaths(clipperPaths, pyclipper.PT_SUBJECT, True)
+    return pc.Execute(pyclipper.CT_UNION, fillType, fillType)
 
 # generates infill for every PathObject with a set fill color, appending it as new
 # subpaths to object.geometry. runs in printer space (mm), so must be called after
@@ -510,19 +527,8 @@ def generateInfill(document: Document, settings: Settings):
         if spacing <= 0 or pyclipper is None:
             continue
 
-        # tessellate with allowArcs=False so every subpath is flattened to Lines only
-        # (all pyclipper understands) - Path.vertices() then gives the polygon points
-        # directly (subpaths are already closed above)
-        clipperPaths = [_toClipperPath(p.tessellate(tolerance, allowArcs=False).vertices()) for p in fillableSubpaths]
-        clipperPaths = [p for p in clipperPaths if len(p) >= 3]
-        if not clipperPaths:
-            continue
-
-        fillType = pyclipper.PFT_EVENODD if obj.style.fillRule == "evenodd" else pyclipper.PFT_NONZERO
         try:
-            pc = pyclipper.Pyclipper()
-            pc.AddPaths(clipperPaths, pyclipper.PT_SUBJECT, True)
-            region = pc.Execute(pyclipper.CT_UNION, fillType, fillType)
+            region = _resolveFillRegion(obj, tolerance)
         except pyclipper.ClipperException as e:
             print(f"Warning: pyclipper failed to resolve fill region for object {obj.id!r} ({e}); skipping infill for it")
             continue
@@ -534,7 +540,10 @@ def generateInfill(document: Document, settings: Settings):
         # linejoin at corners so it hugs the stroke's inner edge rather than the (possibly
         # sharper) raw outline. the strokeWidth/2 gap is folded into the first inset, so the
         # ring tiling still measures everything from the raw region boundary.
-        hasStroke = obj.style.strokeColor is not None and obj.style.strokeWidth > 0
+        #
+        # a dashed stroke is deliberately excluded: it only inks part of that outer band,
+        # so insetting past it would leave an uninked notch in every dash gap
+        hasStroke = obj.style.strokeColor is not None and obj.style.strokeWidth > 0 and obj.style.dashPattern() is None
         firstDelta = (obj.style.strokeWidth / 2 + spacing / 2) if hasStroke else spacing / 2
         joinType = _joinType(obj.style.linejoin) if hasStroke else pyclipper.JT_ROUND
 

@@ -238,12 +238,6 @@ def _inBounds(pt: complex, bounds: tuple[float, float, float, float]) -> bool:
     xmin, ymin, xmax, ymax = bounds
     return xmin <= pt.real <= xmax and ymin <= pt.imag <= ymax
 
-# returns a copy of segment spanning local parameter range [t0, t1] (0 <= t0 <= t1 <= 1)
-def _subsegment(segment: Line | Arc, t0: float, t1: float) -> Line | Arc:
-    if isinstance(segment, Line):
-        return Line(start=segment.point(t0), end=segment.point(t1))
-    return Arc(center=segment.center, u=segment.u, v=segment.v, t0=segment.t0 + t0 * segment.sweep, sweep=(t1 - t0) * segment.sweep)
-
 _BOUNDS_T_EPS = 1e-9 # crossings closer than this (in the segment's own [0,1] space) to
 # each other or to an endpoint are collapsed - a corner hit registers on both adjacent
 # edges and a tangency double-roots, neither of which should yield a zero-length piece
@@ -286,7 +280,7 @@ def _splitAtBounds(segment: Line | Arc, bounds: tuple[float, float, float, float
 
     if len(runs) == 1: # no side change - keep the original segment object untouched
         return [(segment, runs[0][2])]
-    return [(_subsegment(segment, t0, t1), isIn) for t0, t1, isIn in runs]
+    return [(segment.subsegment(t0, t1), isIn) for t0, t1, isIn in runs]
 
 def _addPath(state: _DrawState, settings: Settings, object: PathObject, file: TextIO, raised: bool = False, outOfBoundsNames: list[str] | None = None):
     bounds = _canvasBoundsNozzle(settings)

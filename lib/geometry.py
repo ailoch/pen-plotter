@@ -190,6 +190,11 @@ class Segment(ABC):
         points.append(self.point(1.0))
         return points
 
+    # returns the piece of this segment spanning local parameter range [t0, t1]
+    # (0 <= t0 <= t1 <= 1), exact where the subclass can express it (Line, Arc).
+    def subsegment(self, t0: float, t1: float) -> "Segment":
+        raise NotImplementedError(f"subsegment is only defined for Line/Arc, not {type(self).__name__}")
+
     # return (xmin, ymin, xmax, ymax)
     def bounds(self) -> tuple[float, float, float, float]:
         candidates: list[float] = [0, 1] # start/end of segment
@@ -239,6 +244,9 @@ class Line(Segment):
 
     def toPoints(self, tolerance: float) -> list[complex]:
         return [self.start, self.end]
+
+    def subsegment(self, t0: float, t1: float) -> "Line":
+        return Line(start=self.point(t0), end=self.point(t1))
 
     # parameter of pt on this line, or None if it falls outside the segment. pt is
     # assumed to lie on the (infinite) line - what's actually computed is the
@@ -404,6 +412,11 @@ class Arc(Segment):
     def reverse(self):
         self.t0 += self.sweep
         self.sweep = -self.sweep
+
+    # shifting t0 and scaling sweep is exact for the arc's own [t0, t0+sweep] param-
+    # eterization
+    def subsegment(self, t0: float, t1: float) -> "Arc":
+        return Arc(center=self.center, u=self.u, v=self.v, t0=self.t0 + t0*self.sweep, sweep=(t1-t0)*self.sweep)
 
     def derivative(self, t: float) -> complex:
         theta = self.t0 + t*self.sweep

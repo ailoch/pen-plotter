@@ -401,6 +401,21 @@
        d="M100,0 L100,16"
        stroke-dasharray="2 2"
        stroke-dashoffset="1" />
+    <!-- dashed outline AND fill together. stroke-width is well above fillSpacing so
+         the dashes really do multi-pass, and the two have to divide the band at the
+         centerline: the fill tiles the whole interior, and lib/stroke.py draws only
+         the outward half of each dash so nothing is inked twice. Closed, so it also
+         exercises the seam-merge case where a dash wraps the start point. -->
+    <rect
+       id="stroke-dash-filled"
+       x="191"
+       y="1"
+       width="14"
+       height="14"
+       fill="#000000"
+       stroke-width="2"
+       stroke-dasharray="3, 2"
+       stroke-dashoffset="1" />
     <!-- joins need a thick, acute-angled V to actually show bevel/round/miter
          differences - the ambient 0.3mm width made them visually identical.
          shifted down (translate y 20 -> 30) so the real 4mm-wide expansion and
