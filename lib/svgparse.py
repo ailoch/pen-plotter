@@ -41,13 +41,44 @@ def readStyle(element: svgelements.SVGElement) -> Style:
         except ValueError:
             pass
 
+    # a value carrying units or a percentage ("5px", "10%") fails float() and falls
+    # back to solid, same as any other malformed pattern.
+    #
+    # values["transform"] is the CUMULATIVE chain (root viewport composed with every
+    # ancestor group), which is exactly what svgelements applied to stroke_width -
+    # values["viewport_transform"] is the root viewport alone and would miss the
+    # groups. sqrt(|det|) matches the uniform-scale equivalent applyTransformations
+    # uses on strokeWidth for the same reason (a single length can't express a
+    # non-uniform scale).
+    lengthScale = 1.0
+    rawTransform = values.get("transform")
+    if rawTransform:
+        try:
+            m = svgelements.Matrix(rawTransform)
+            det = abs(m.a * m.d - m.b * m.c)
+            if det > 0:
+                lengthScale = det ** 0.5
+        except Exception:
+            pass
+
     dasharray = None
     rawDasharray = values.get("stroke-dasharray")
     if rawDasharray and rawDasharray != "none":
         try:
             parsedDasharray = [float(v) for v in rawDasharray.replace(",", " ").split()]
+            # a negative length invalidates the whole list per spec, leaving it solid
             if parsedDasharray and all(v >= 0 for v in parsedDasharray):
-                dasharray = parsedDasharray
+                dasharray = [v * lengthScale for v in parsedDasharray]
+        except ValueError:
+            pass
+
+    # unlike the dash lengths, a negative offset is valid - SVG 2 reads it as shifting
+    # the pattern backwards along the path, so it's kept as-is rather than rejected
+    dashoffset = 0.0
+    rawDashoffset = values.get("stroke-dashoffset")
+    if rawDashoffset is not None:
+        try:
+            dashoffset = float(rawDashoffset) * lengthScale
         except ValueError:
             pass
 
@@ -58,6 +89,7 @@ def readStyle(element: svgelements.SVGElement) -> Style:
         linecap=linecap,
         miterlimit=miterlimit,
         dasharray=dasharray,
+        dashoffset=dashoffset,
         fillColor=None if values.get("fill") == "none" else [0, 0, 0],
         fillRule=values.get("fill-rule", "nonzero"),
         #TODO: implement color conversion (hex -> rgb)

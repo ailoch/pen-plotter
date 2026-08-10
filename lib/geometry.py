@@ -5,6 +5,7 @@ from scipy.integrate import quad
 from lib.settings import LineType
 
 # stores an object style (line width, color, fill)
+# all length units are mm
 @dataclass
 class Style:
     strokeWidth: float = 1
@@ -13,10 +14,21 @@ class Style:
     linejoin: str = "miter" # "miter" | "round" | "bevel"
     linecap: str = "butt" # "butt" | "round" | "square"
     miterlimit: float = 4 # SVG default
-    dasharray: list[float] | None = None #TODO: dash generation
+    # none means solid stroke
+    dasharray: list[float] | None = None
+    dashoffset: float = 0 # distance into the pattern the dashing starts; may be negative
     # none means no fill
     fillColor: list[int] | None = field(default_factory=lambda: [0, 0, 0])
     fillRule: str = "nonzero" # SVG default; the other valid value is "evenodd"
+
+    # the dasharray normalized per the SVG spec, or None if this stroke is effectively
+    # solid. an odd-length list repeats to become even, so "5 3 2" alternates on/off as
+    # 5-on 3-off 2-on 5-off 3-on 2-off, not 5-on 3-off 2-on.
+    def dashPattern(self) -> list[float] | None:
+        if not self.dasharray:
+            return None
+        pattern = self.dasharray if len(self.dasharray) % 2 == 0 else self.dasharray * 2
+        return pattern if sum(pattern) > 0 else None
 
 # stores an affine transformation (rotation, scaling, shear, transform)
 class Transform:
@@ -958,15 +970,18 @@ class PathObject:
             for segment in path.segments:
                 segment.applyTransform(self.transform)
 
-        # stroke-width (and dash lengths) are in user units, so they need to scale
-        # with the transform same as the geometry does. sqrt(|det|) of the 2x2 part
-        # is the uniform-scale equivalent of a possibly non-uniform transform - a
+        # stroke-width (and dash lengths/offset) are in user units, so they need to
+        # scale with the transform same as the geometry does. sqrt(|det|) of the 2x2
+        # part is the uniform-scale equivalent of a possibly non-uniform transform - a
         # single width/length can't represent true non-uniform stroke scaling anyway
         m = self.transform.matrix
         scale = abs(m[0]*m[3] - m[1]*m[2]) ** 0.5
         self.style.strokeWidth *= scale
         if self.style.dasharray is not None:
             self.style.dasharray = [d * scale for d in self.style.dasharray]
+            # dashoffset is a distance along the path, so it scales with the dash
+            # lengths it indexes into - otherwise a scaled shape's pattern shifts
+            self.style.dashoffset *= scale
 
         self.transform = Transform() # reset transformation
 
