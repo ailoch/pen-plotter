@@ -24,6 +24,9 @@ CONFIGS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "configs"
 DRAW_ROLES = (LineType.STROKE, LineType.INFILL, LineType.GAP_INFILL, LineType.INVALID)
 
 
+#region helpers
+
+
 def _load(tmp_path, data: dict) -> Settings:
     """Write `data` as a config file and load it."""
     path = tmp_path / "config.json"
@@ -54,7 +57,9 @@ def _warnings(capsys) -> list[str]:
     ]
 
 
-# ---------------------------------------------------------------- file-level
+#endregion
+
+#region file-level
 
 
 def testMissingFileFallsBackToDefaults(tmp_path, capsys):
@@ -98,7 +103,9 @@ def testNonObjectSectionsRejected(tmp_path, data, capsys):
     assert "must be a JSON object" in capsys.readouterr().out
 
 
-# ---------------------------------------------------------------- validation
+#endregion
+
+#region validation
 
 
 def testDefaultSettingsAreValid(capsys):
@@ -200,7 +207,9 @@ def testPenAtLeastAsWideAsFillSpacingIsSilent(tmp_path, processing, capsys):
     assert _warnings(capsys) == []
 
 
-# ---------------------------------------------------------------- bad values
+#endregion
+
+#region bad values
 
 
 def testWrongTypesAreAllRejected(capsys):
@@ -233,7 +242,9 @@ def testUnknownMoveTypeIsReported(tmp_path, capsys):
     assert any("sprinkle" in w for w in _warnings(capsys))
 
 
-# ---------------------------------------------------------------- conversions
+#endregion
+
+#region conversions
 
 
 def testIntIsAcceptedForFloatSetting(tmp_path):
@@ -280,7 +291,9 @@ def testPositionsBecomeComplex(tmp_path):
     assert s.startPos == {"X": 5, "Y": 6, "Z": 7}
 
 
-# ---------------------------------------------------------------- "draw" key
+#endregion
+
+#region "draw" key
 
 
 @pytest.mark.parametrize("name, drawValue, override, expected", [
@@ -334,7 +347,9 @@ def testDrawKeyDoesNotLeakIntoTravel(tmp_path):
     assert all(s.heights[r] == 0.0 for r in DRAW_ROLES)
 
 
-# ---------------------------------------------------------------- alignment
+#endregion
+
+#region alignment
 
 
 # offset (10, 5) is "distance towards the plate centre" from the named corner,
@@ -374,3 +389,6 @@ def testSafeZoneAlignmentResolvesIndependently(tmp_path):
     }})
     assert s.safeZoneOffset == 90 + 90j  # 200 - 10 - 100
     assert s.canvasOffset == 20 + 20j
+
+
+#endregion

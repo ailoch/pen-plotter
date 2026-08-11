@@ -25,6 +25,8 @@ DRAWN = (LineType.INFILL, LineType.GAP_INFILL)
 OUTER = [0 + 0j, 20 + 0j, 20 + 20j, 0 + 20j]
 INNER = [5 + 5j, 15 + 5j, 15 + 15j, 5 + 15j]
 
+#region helpers
+
 
 def _donut(fillRule: str) -> PathObject:
     outer = Path.fromPoints(OUTER, closed=True)
@@ -55,6 +57,10 @@ def _inkPoints(obj, tolerance) -> list[complex]:
 def _inHole(pt: complex) -> bool:
     """Strictly inside the inner square."""
     return 5 < pt.real < 15 and 5 < pt.imag < 15
+
+
+#endregion
+
 
 def testEvenoddLeavesTheHoleEmpty(settings):
     """Under evenodd the inner square is a hole - no ink may land inside it."""

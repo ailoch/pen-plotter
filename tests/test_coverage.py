@@ -39,6 +39,8 @@ from lib.stroke import generateStroke
 from lib.infill import generateInfill, _SCALE, _toClipperPath, _coverageBand, _difference, _offsetPolys, _joinType
 from lib.svgparse import loadSvg, parseSvg
 
+#region helpers
+
 TESTS_DIR = os.path.dirname(os.path.abspath(__file__))
 DRAWN_ROLES = (LineType.STROKE, LineType.INFILL, LineType.GAP_INFILL)
 
@@ -279,6 +281,9 @@ def _measure(svgPath, settings):
         area, pieces, thick = _uncoveredArea(target, drawn, spacing, tolerance)
         results.append((str(obj.id), area, pieces, thick))
     return results
+
+
+#endregion
 
 
 @pytest.mark.slow

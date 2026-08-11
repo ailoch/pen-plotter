@@ -21,6 +21,8 @@ from lib.infill import _SCALE, _toClipperPath, generateInfill
 from lib.settings import LineType
 from lib.stroke import _applyDash, _passCount, _passDeltas, generateStroke
 
+#region helpers
+
 DRAWN = (LineType.STROKE, LineType.GAP_INFILL)
 
 # a 12mm horizontal line and a 10mm square (perimeter 40) - both chosen so the dash
@@ -89,7 +91,9 @@ def _inkLength(paths) -> float:
     return sum(p.length() for p in paths)
 
 
-# ----------------------------------------------------------------- pass deltas
+#endregion
+
+#region pass deltas
 
 
 @pytest.mark.parametrize("numPasses", range(1, 12))
@@ -118,7 +122,9 @@ def testPassDeltasTileTheStrokeEvenly(numPasses):
     assert positions[0] - s / 2 == pytest.approx(-width / 2)
 
 
-# ------------------------------------------------------------------- pass count
+#endregion
+
+#region pass count
 
 
 @pytest.mark.parametrize("width,spacing,expected", [
@@ -158,7 +164,9 @@ def testPassCountNeverLetsThePitchExceedTheSpacing(width, spacing):
     assert width / _passCount(width, spacing) <= spacing * (1 + 1e-9)
 
 
-# ----------------------------------------------------------------- stroke width
+#endregion
+
+#region stroke width
 
 
 def testWiderStrokeCoversMoreArea(settings):
@@ -177,7 +185,9 @@ def testWiderStrokeCoversMoreArea(settings):
     assert areas == sorted(areas), f"area did not grow with width: {areas}"
 
 
-# ----------------------------------------------------------------- the dash walk
+#endregion
+
+#region the dash walk
 
 
 # each length is a whole number of the pattern's periods, so the duty cycle applies
@@ -224,7 +234,9 @@ def testDashesPreserveArcs(settings):
     assert _inkLength(dashes) == pytest.approx(2.0 * 15 + 2.0)
 
 
-# ----------------------------------------------------------------- dash offset
+#endregion
+
+#region dash offset
 
 
 def testDashOffsetMovesWhereDashesStart(settings):
@@ -278,7 +290,9 @@ def testClosedPathMergesTheSeamDash(settings):
     assert seam.end() == pytest.approx(1 + 0j)
 
 
-# ------------------------------------------------------- dashes in the pipeline
+#endregion
+
+#region dashes in the pipeline
 
 
 def testDashedStrokeInksLessThanSolid(settings):
@@ -344,7 +358,9 @@ def testFallbackStillDashes(settings):
     assert _inkLength(drawn) == pytest.approx(6.0)
 
 
-# ----------------------------------------------------------------- one-sided
+#endregion
+
+#region one-sided
 
 
 def _inkInsideFill(obj, settings):
@@ -397,3 +413,6 @@ def testUnfillableDashedShapeStaysTwoSided(settings):
     # a two-sided 2mm-wide stroke over 6mm of dash covers ~12mm^2; a one-sided one
     # would be about half that
     assert ink > 9.0, f"only {ink:.3f} mm^2 of ink (~12 mm^2 expected) - the dashes were one-sided"
+
+
+#endregion

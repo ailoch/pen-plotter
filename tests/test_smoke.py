@@ -17,6 +17,8 @@ from lib.infill import generateInfill
 from lib.route import orderPaths
 from lib.plot import createFile
 
+#region helpers
+
 TESTS_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # fixtures that are supposed to be rejected by loadSvg
@@ -56,6 +58,11 @@ def runPipeline(svgPath: str, settings):
     dropRawGeometry(document)
     orderPaths(document, settings)
     return document
+
+
+#endregion
+
+#region pipeline
 
 
 @pytest.mark.parametrize("svgPath", _drawingSvgs(), ids=os.path.basename)
@@ -131,3 +138,6 @@ def testEveryDrawnRoleHasMotionSettings(settings):
         assert role in settings.heights, f"{role} missing from motion.heights"
         assert role in settings.speeds, f"{role} missing from motion.speeds"
         assert role in settings.accels, f"{role} missing from motion.accels"
+
+
+#endregion

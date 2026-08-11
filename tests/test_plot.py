@@ -4,7 +4,9 @@ import pytest
 from lib.plot import _LOAD_PROGRESS_MAX_INTERVAL, _LOAD_PROGRESS_MAX_STEP, _LOAD_PROGRESS_MIN_STEP, _eValue, _waitForPen
 from lib.settings import Settings
 
-# --- E axis scaling (_eValue) -----------------------------------------------------
+
+#region E axis scaling
+
 
 @pytest.mark.parametrize("multiplier,expected", [(1, 10), (0.5, 5), (2, 20)])
 def testEValueScalesByTheMultiplier(multiplier, expected):
@@ -18,7 +20,11 @@ def testNonPositiveMultiplierDropsE(multiplier):
     would emit a *retraction* on every draw move rather than nothing at all."""
     assert _eValue(Settings(eAxisMultiplier=multiplier), 10) == 0
 
-# --- pen-load wait (_waitForPen) --------------------------------------------------
+
+#endregion
+
+#region pen-load wait
+
 
 def _block(delay: float, showProgress: bool = True) -> str:
     return _waitForPen(Settings(loadDelay=delay, showLoadProgress=showProgress))
@@ -81,3 +87,6 @@ def testNonPositiveDelayEmitsNoCountdown(delay):
     """Nothing to count down through - and a negative delay must not become a
     negative dwell."""
     assert _block(delay) == "G4 P0"
+
+
+#endregion
