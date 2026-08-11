@@ -67,6 +67,7 @@ class Settings:
     accels: dict[LineType, float] = field(default_factory=lambda: {LineType.TRAVEL: 1000})
     shortTravelThresholds: dict[LineType, float] = field(default_factory=lambda: {LineType.STROKE: .5, LineType.INFILL: .5, LineType.GAP_INFILL: .5})
     loadDelay: float = 20.0
+    showLoadProgress: bool = True # if true, {WAIT_FOR_PEN} counts the load delay down on the printer's progress display (M73) instead of dwelling silently
     eAxisMultiplier: float = 1.0 # scales every emitted E value - reduces the raw commanded E rate the P1S planner throttles XY speed against (see CLAUDE.md's Hardware section for the full mechanism, including M221's role); side effect: the slicer's total-filament stat scales down by the same factor
 
     # processing settings

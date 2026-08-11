@@ -122,7 +122,7 @@ M400
 G21 ; use mm
 
 ; allow pen to be loaded
-G4 S{LOAD_DELAY}
+{WAIT_FOR_PEN}
 
 ; LAYER_HEIGHT: 0.2
 ; LINE_WIDTH: {LINE_WIDTH}

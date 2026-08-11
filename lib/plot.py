@@ -444,6 +444,36 @@ def _bedExcludeArea(plateSize: complex, canvasMin: complex, canvasMax: complex) 
 
     return ",".join(f"{_fmtNum(x)}x{_fmtNum(y)}" for x, y in _removeRedundantPoints(polygon))
 
+# how coarsely/finely the pen-load countdown is allowed to step. it ticks at whichever
+# is shorter, half a second or 5% of the delay - so a short delay still counts down
+# smoothly and a long one doesn't crawl - but never finer than 1%, below which the
+# extra M73s would only redisplay the number already on screen.
+_LOAD_PROGRESS_MAX_INTERVAL = .5 # seconds
+_LOAD_PROGRESS_MAX_STEP = 5.0 # percent
+_LOAD_PROGRESS_MIN_STEP = 1.0 # percent
+
+# builds the {WAIT_FOR_PEN} block: the dwell that gives the user time to load the pen.
+# with showLoadProgress it's split into steps with an M73 percentage between each,
+# counting 100 -> 0 as the fraction of the wait *remaining* (M73's P is normally
+# progress, but the user reading it here is waiting on a countdown, not a print)
+def _waitForPen(settings: Settings) -> str:
+    delay = max(settings.loadDelay, 0)
+    delayMs = delay * 1000
+    if delayMs <= 0 or not settings.showLoadProgress:
+        return f"G4 P{_fmtNum(delayMs)}"
+
+    stepPercent = min(_LOAD_PROGRESS_MAX_STEP, max(_LOAD_PROGRESS_MIN_STEP, 100 * _LOAD_PROGRESS_MAX_INTERVAL / delay))
+    # ceil so the real step only ever comes out *finer* than the cap, and the steps
+    # divide the countdown evenly rather than leaving a stub at the end
+    steps = math.ceil(100 / stepPercent)
+    # step boundaries taken from the cumulative time, so rounding each dwell to whole
+    # milliseconds can't accumulate into a drift across the whole wait
+    bounds = [round(delayMs * i / steps) for i in range(steps + 1)]
+
+    lines = [f"M73 P{round(100 * (steps - i) / steps)}\nG4 P{bounds[i+1] - bounds[i]}" for i in range(steps)]
+    lines.append("M73 P0") # steps <= 100, so the last step above is P1 at the lowest
+    return "\n".join(lines)
+
 # writes geom to fileOut as gcode, according to settings
 def createFile(geom: Document, settings: Settings, fileOut: str) -> bool:
     state = _DrawState(pos=dict(settings.startPos)) # copy - state.pos is mutated per-move, startPos must not be
@@ -465,7 +495,7 @@ def createFile(geom: Document, settings: Settings, fileOut: str) -> bool:
                 "TRAVEL_SPEED": settings.speeds[LineType.TRAVEL],
                 "TRAVEL_ACCEL": settings.accels[LineType.TRAVEL],
                 "LINE_WIDTH": settings.penWidth,
-                "LOAD_DELAY": settings.loadDelay,
+                "WAIT_FOR_PEN": _waitForPen(settings),
                 "END_X": settings.endPos.real,
                 "END_Y": settings.endPos.imag
             }
