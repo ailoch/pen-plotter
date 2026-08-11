@@ -106,12 +106,12 @@ class Transform:
         )
 
     def translate(self, x: float, y: float | None = None):
-        if not y:
+        if y is None:
             y = x
         self.matrix = self._getReverseTransform([1, 0, 0, 1, x, y])
 
     def scale(self, sx: float, sy: float | None = None):
-        if not sy:
+        if sy is None:
             sy = sx
         self.matrix = self._getReverseTransform([sx, 0, 0, sy, 0, 0])
 
@@ -120,9 +120,11 @@ class Transform:
         if cx == 0 and cy == 0:
             self.matrix = self._getReverseTransform(rot)
         else:
-            self.matrix = self._getReverseTransform([1, 0, 0, 1, cx, cy])
-            self.matrix = self._getReverseTransform(rot)
+            # each call post-multiplies, so these accumulate as T(c) @ R @ T(-c):
+            # move the centre to the origin, rotate, then put it back
             self.matrix = self._getReverseTransform([1, 0, 0, 1, -cx, -cy])
+            self.matrix = self._getReverseTransform(rot)
+            self.matrix = self._getReverseTransform([1, 0, 0, 1, cx, cy])
 
     def skewX(self, angle: float):
         self.matrix = self._getReverseTransform([1, 0, math.tan(math.radians(angle)), 1, 0, 0])
@@ -571,8 +573,14 @@ class CubicBezier(Segment):
         return length
 
     def _axisExtrema(self, a: float, b: float, c: float) -> list[float]:
-        if abs(a) < 1e-12: # prevent division by 0
-            return []
+        if abs(a) < 1e-12:
+            # the derivative degenerates to the line b*t + c, which still has a
+            # root - a symmetric arch lands here, and
+            # skipping it would leave the whole arch outside the reported bounds
+            if abs(b) < 1e-12: # constant derivative - no interior extremum
+                return []
+            t = -c / b
+            return [t] if 0 < t < 1 else []
         disc = b*b - 4*a*c
         ts = []
         if disc >= 0:

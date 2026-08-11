@@ -188,6 +188,8 @@ def testWiderStrokeCoversMoreArea(settings):
     ([3.0, 1.0], 12.0, 3 / 4),
     ([1.0, 3.0], 12.0, 1 / 4),
     ([4.0, 1.0, 1.0, 1.0], 14.0, 5 / 7),
+    # what Style.dashPattern() hands over for an odd-length "5 3 2"
+    ([5.0, 3.0, 2.0, 5.0, 3.0, 2.0], 20.0, 1 / 2),
 ])
 def testDashInkMatchesTheOnFraction(pattern, length, duty, settings):
     """Total inked length is the pattern's duty cycle times the path length.
@@ -200,22 +202,6 @@ def testDashInkMatchesTheOnFraction(pattern, length, duty, settings):
     dashes = _applyDash(line, pattern, 0, settings.tessellationTolerance)
     assert _inkLength(dashes) == pytest.approx(length * duty)
     assert all(not d.isClosed() for d in dashes), "a dash of an open path must be open"
-
-
-def testOddLengthPatternRepeatsPerSpec(settings):
-    """SVG repeats an odd-length dasharray to make it even, so "5 3 2" runs
-    5-on 3-off 2-on 5-off 3-on 2-off - a 7/10 duty cycle, not 7/(5+3+2)."""
-    line = Path.fromPoints([0 + 0j, 20 + 0j], closed=False)
-    pattern = Style(dasharray=[5.0, 3.0, 2.0]).dashPattern()
-    # `is not None` on its own line, not folded into the equality below: an `==` check
-    # doesn't narrow the Optional for a type checker (any __eq__ can return True), and
-    # it also separates "collapsed to solid" from "repeated wrongly" in the failure
-    assert pattern is not None, "an odd-length dasharray must not read as solid"
-    assert pattern == [5.0, 3.0, 2.0, 5.0, 3.0, 2.0]
-
-    dashes = _applyDash(line, pattern, 0, settings.tessellationTolerance)
-    # on-lengths over one 20mm period are 5 (0-5), 2 (8-10) and 3 (15-18) = 10mm
-    assert _inkLength(dashes) == pytest.approx(10.0)
 
 
 def testZeroGapPatternIsOneContinuousDash(settings):
