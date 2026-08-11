@@ -115,6 +115,17 @@ Set `debug.profiling: true` in the config file to run under `cProfile` and print
 
 `pyclipper` (infill polygon offsetting), `svgelements` (SVG parsing), `commentjson` (JSONC), `scipy` (arc-length integration; also `scipy.spatial.Voronoi` for the infill medial-axis gap fill — imported lazily there so its absence just falls back to loop gap fill). `pyclipper` has no type stubs; `typings/pyclipper/__init__.pyi` is hand-cleaned via `stubgen`.
 
+## Comments & Docstrings
+
+- Not every change needs a comment. Skip it when the code reads clearly on its own.
+- Docstrings describe what a function accomplishes, treating it as a black box — not how callers use it or where it's called from. Put mechanism (how it works internally) in comments next to the relevant code, not the docstring.
+- Don't reference line numbers; they drift.
+- Don't say "see `file.py`"/"see `functionName`"/"see above" for more info, even pointing elsewhere in the same file, unless truly unavoidable — the reader shouldn't have to go find another spot to finish reading this one. State the needed fact inline instead.
+- Reach for a concrete example only when the prose explanation alone wouldn't land.
+- Don't narrate how a bug was found or debugged; state what's true about the code now.
+- Don't write about what the code used to be; github will tell us that.
+- Length budget: docstrings ~4-5 lines, comments ~2-3 lines, unless there's a specific reason to exceed it.
+
 ## Files
 
 - `_Process.py` — entry point & main loop (input prompts, retry logic, profiling wrapper)
