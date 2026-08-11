@@ -38,8 +38,7 @@ DRAWN_ROLES = (LineType.STROKE, LineType.INFILL, LineType.GAP_INFILL)
 #
 # Some leftover is expected and benign. Adjacent rings meet with a seam of a few
 # tens of microns, and fillSpacing is deliberately set under the real pen width
-# precisely so the pen bridges those - CLAUDE.md calls these "the benign sub-penWidth
-# specks between adjacent rings".
+# precisely so the pen bridges those specks.
 #
 # So this is a KNOWN-ISSUES BASELINE, not a claim that such gaps are correct - it
 # sits just above the current worst case so the suite is green today and any new
@@ -199,8 +198,9 @@ def _area(paths) -> float:
 def _uncoveredArea(target, drawnPaths, spacing, tolerance):
     """mm^2 of target no drawn centerline's ink band reaches, and how thick it is.
 
-    Returns (area, pieceCount, thickArea) where thickArea counts only what
-    survives eroding by GAP_HALF_WIDTH_FRACTION * spacing - see that constant.
+    Returns (area, pieceCount, thickArea) where thickArea counts only what survives
+    eroding by GAP_HALF_WIDTH_FRACTION * spacing - the known-issues baseline below
+    which a gap is blamed on discretization noise rather than a real failure.
     """
     if not target:
         return 0.0, 0, 0.0

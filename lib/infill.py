@@ -34,7 +34,7 @@ def _fromClipperPath(path) -> list[complex]:
 # the fill inset (so it follows a stroke's inner edge the same way the stroke itself
 # is drawn) and lib/stroke.py's own offsetting.
 def _joinType(linejoin: str):
-    assert pyclipper is not None # only called once pyclipper is known to be installed (see callers)
+    assert pyclipper is not None # only called once pyclipper is known to be installed
     return {"round": pyclipper.JT_ROUND, "bevel": pyclipper.JT_SQUARE}.get(linejoin, pyclipper.JT_MITER) # default / "miter"
 
 # converts a clipper-int loop back to a closed, tessellated Path tagged with lineType,
@@ -209,9 +209,9 @@ def _medialAxisLines(outer: list, holes: list, spacing: float, tolerance: float)
 
     # a Voronoi vertex is on the medial axis only if it lies strictly inside the piece
     # (inside the outer contour and outside every hole) - resolved for every vertex in one
-    # vectorised pass (see _pointsInPolygon). Voronoi vertices seeded by near-boundary
-    # sites can sit arbitrarily far out (near-infinite finite coords), so bbox-gate first:
-    # it skips the obvious outsiders and keeps those huge values out of the arithmetic.
+    # vectorised point-in-polygon pass. Voronoi vertices seeded by near-boundary sites can
+    # sit arbitrarily far out (near-infinite finite coords), so bbox-gate first: it skips
+    # the obvious outsiders and keeps those huge values out of the arithmetic.
     outerArr = np.asarray(outer, dtype=float)
     minX, minY = outerArr.min(axis=0)
     maxX, maxY = outerArr.max(axis=0)
@@ -498,8 +498,9 @@ def _resolveFillRegion(obj, tolerance: float) -> list:
 
 # generates infill for every PathObject with a set fill color, appending it as new
 # subpaths to object.geometry. runs in printer space (mm), so must be called after
-# parseSvg's transforms are applied. settings.fillSpacing <= 0 disables the drawn fill
-# but closing of fillable subpaths (see below) still happens.
+# parseSvg's transforms are applied. settings.fillSpacing <= 0 disables the drawn fill,
+# but an open fillable subpath is still closed in place so the drawn outline matches
+# the shape SVG would have filled.
 def generateInfill(document: Document, settings: Settings):
     spacing = settings.fillSpacing
     tolerance = settings.tessellationTolerance

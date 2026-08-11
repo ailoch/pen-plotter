@@ -52,11 +52,11 @@ class Settings:
     plateSize: complex = 150+150j # plate rect size; lower-left corner fixed at origin
     safeZoneSize: complex = 150+150j # size of the area the pen can reach without colliding
     safeZoneOffset: complex = 0 # offset from origin of the safe zone's lower-left corner, in pen space
-    safeZoneAlignment: str = "BL" # which plate corner safeZoneOffset is measured from ("BL"/"BR"/"TL"/"TR") - see Alignment & Scaling in CLAUDE.md
+    safeZoneAlignment: str = "BL" # which plate corner safeZoneOffset is measured from ("BL"/"BR"/"TL"/"TR")
 
     canvasSize: complex = 150+150j # size of the paper/drawable surface
     canvasOffset: complex = 0 # offset from origin of the canvas's lower-left corner, in pen space
-    canvasAlignment: str = "BL" # which plate corner canvasOffset is measured from ("BL"/"BR"/"TL"/"TR") - see Alignment & Scaling in CLAUDE.md
+    canvasAlignment: str = "BL" # which plate corner canvasOffset is measured from ("BL"/"BR"/"TL"/"TR")
 
     # deliberately a float - the parsing logic would assume float values are invalid if this was an int
     maxVerticalSpeed: float = 600.0 # mm/min - most printers' Z axis is slower than X/Y, so the router assumes min(speeds[travel], maxVerticalSpeed) when costing a travel's pen lift/lower
@@ -68,7 +68,7 @@ class Settings:
     shortTravelThresholds: dict[LineType, float] = field(default_factory=lambda: {LineType.STROKE: .5, LineType.INFILL: .5, LineType.GAP_INFILL: .5})
     loadDelay: float = 20.0
     showLoadProgress: bool = True # if true, {WAIT_FOR_PEN} counts the load delay down on the printer's progress display (M73) instead of dwelling silently
-    eAxisMultiplier: float = 1.0 # scales every emitted E value - reduces the raw commanded E rate the P1S planner throttles XY speed against (see CLAUDE.md's Hardware section for the full mechanism, including M221's role); side effect: the slicer's total-filament stat scales down by the same factor
+    eAxisMultiplier: float = 1.0 # scales every emitted E value - reduces the raw commanded E rate the P1S planner throttles XY speed against; side effect: the slicer's total-filament stat scales down by the same factor
 
     # processing settings
     tessellationTolerance: float = .012

@@ -697,11 +697,11 @@ class Path:
             bounds = (min(bounds[0], segmentBounds[0]), min(bounds[1], segmentBounds[1]), max(bounds[2], segmentBounds[2]), max(bounds[3], segmentBounds[3]))
         return bounds
 
-    # deviation-check samples per original segment touched by a candidate fit
-    # range (see _tryFitRange)
+    # deviation-check samples taken per original segment touched by a candidate fit range
     _SAMPLES_PER_SEGMENT = 10
 
-    # circumcircle radius/chord cutoff passed to Arc.fromThreePoints (see there)
+    # circumcircle radius/chord cutoff for accepting a 3-point arc fit; rejects
+    # numerically unstable near-collinear circles
     _MAX_RADIUS_TO_CHORD = 20.0
 
     # tries to fit [t0,t1] (in Path.point()'s 0..1 space) to a single Line or
@@ -728,7 +728,7 @@ class Path:
             if segT1 <= segT0:
                 continue
             if segT0 > t0:
-                sampleTs.append(segT0) # exact boundary - see corner note above
+                sampleTs.append(segT0) # exact segment boundary, where a corner can hide between smooth samples
             if isinstance(self.segments[segIdx], Line):
                 sampleTs.append((segT0 + segT1) / 2)
             else:
@@ -782,11 +782,11 @@ class Path:
                 center, r = arc.center, abs(arc.u)
                 fits = True
                 if allLines:
-                    # a range of pure Lines has no interior curvature of its own
-                    # (each sample is already an exact data point, plus each
-                    # segment's own midpoint - see above), so there's no "out
-                    # and back" risk within any one sample gap: plain radial
-                    # deviation is enough, and skips the angle math below
+                    # a range of pure Lines has no interior curvature of its own (each
+                    # sample is already an exact data point, plus each segment's own
+                    # midpoint is sampled too), so there's no "out and back" risk within
+                    # any one sample gap: plain radial deviation is enough, and skips
+                    # the angle math below
                     for p in samplePts:
                         if abs(abs(p - center) - r) > tolerance:
                             fits = False
@@ -900,11 +900,10 @@ class Path:
     # with allowArcs, segments already in final form (Lines, circular Arcs) are
     # passed through untouched; only curves that still need fitting (Beziers,
     # non-circular Arcs) go through the bidirectional fitter, which fits across
-    # their shared boundaries (see _fitRange) - so already-tessellated input
-    # (e.g. re-tessellating for gcode output) is nearly free. Set fitLines=True
-    # to instead treat every Line as raw data to be re-fit too (e.g. a dense
-    # polyline of individually-meaningless points, like a pyclipper offset
-    # result) - see Path.fromPoints.
+    # their shared boundaries - so already-tessellated input (e.g. re-tessellating
+    # for gcode output) is nearly free. Set fitLines=True to instead treat every
+    # Line as raw data to be re-fit too (e.g. a dense polyline of individually-
+    # meaningless points, like a pyclipper offset result)
     def tessellate(self, tolerance: float, allowArcs: bool = True, fitLines: bool = False) -> "Path":
         n = len(self.segments)
         if n == 0:
@@ -1004,8 +1003,7 @@ class PathObject:
     def end(self) -> complex:
         return self.geometry[-1].end()
 
-    # returns the point at normalized parameter t (0 <= t <= 1) along the given
-    # subpath - see Path.point()
+    # returns the point at normalized parameter t (0 <= t <= 1) along the given subpath
     def point(self, subpathIndex: int, t: float) -> complex:
         return self.geometry[subpathIndex].point(t)
 

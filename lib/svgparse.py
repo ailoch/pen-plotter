@@ -104,7 +104,7 @@ def readStyle(element: svgelements.SVGElement) -> Style:
 # nothing to check for that case.
 # opacity=0 is treated the same way: it's real, total invisibility (unlike a
 # fractional opacity, which this converter can't represent as partial ink and just
-# draws at full strength - see the "opacity" [PARTIAL] fixture). Only the element-wide
+# draws at full strength regardless of the value). Only the element-wide
 # `opacity` is checked, not fill-opacity/stroke-opacity - either of those alone still
 # leaves the other visible, so it's not a "should this object be drawn at all"
 # case. Note svgelements resolves opacity via the same override-wins cascade as
@@ -268,8 +268,8 @@ def loadSvg(svgPath: str) -> svgelements.SVG:
         raise SvgParseError(f"SVG file '{svgPath}' has a non-positive viewBox width/height ({svg.viewbox}); per the SVG spec this is an error")
     return svg
 
-# asks the user how to reconcile the SVG viewport with the canvas (see _promptRescale).
-# interactive, so kept out of parseSvg's timed/profiled body.
+# thin wrapper unpacking svg.viewbox for _promptRescale. interactive, so kept out of
+# parseSvg's timed/profiled body.
 def promptRescale(svg: svgelements.SVG, settings: Settings) -> tuple[float, float]:
     assert svg.viewbox is not None # loadSvg already validated this
     svgWidth = cast(float, svg.viewbox.width)

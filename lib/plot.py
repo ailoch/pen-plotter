@@ -90,8 +90,8 @@ def _evalTemplateBlock(expr: str, replace: dict[str, str | float]) -> str:
         return _fmtNum(result)
     return str(result)
 
-# adds the contents of srcFile to the end of destFile, substituting {...} expression
-# blocks (see _evalTemplateBlock)
+# adds the contents of srcFile to the end of destFile, evaluating each {...} block as
+# an arithmetic expression against replace and substituting in the result
 def _fileAppend(srcFile: TextIO, destFile: TextIO, replace: dict[str, str | float] = {}):
     for line in srcFile:
         if "{" in line: # this saves time because the regex sub below is slower and most lines don't need it

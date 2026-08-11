@@ -9,7 +9,7 @@ except ImportError:
     pyclipper = None
 
 # small tolerance on the pass count calculation to prevent rounding errors giving
-# certian strokes extra passes
+# certain strokes extra passes
 _PASS_COUNT_REL_TOL = 1e-9
 
 def _passCount(strokeWidth: float, spacing: float) -> int:
@@ -28,7 +28,7 @@ def _passCount(strokeWidth: float, spacing: float) -> int:
 # caller) with rings spaced every s out to the same outer edge; even numPasses has no
 # center pass, so its innermost ring sits at s/2 instead of s so the pitch between the
 # two innermost rings (one on each side) still comes out to s. either way the outermost
-# delta + s/2 lands exactly at strokeWidth/2 - see CLAUDE.md's Stroke section.
+# delta + s/2 lands exactly at strokeWidth/2.
 def _passDeltas(numPasses: int, s: float) -> list[float]:
     if numPasses % 2 == 1:
         return [k * s for k in range(1, (numPasses - 1) // 2 + 1)]
@@ -87,10 +87,10 @@ def _extractSpan(segments: list[Segment], cumulative: list[float], lengths: list
             out.append(seg.subsegment(t0, t1))
     return out
 
-# splits one subpath into the open subpaths its dash pattern actually inks.
-#
-# Works on the TESSELLATED path (Lines + circular Arcs only) rather than the raw
-# geometry because dashing splines would require
+# splits one subpath into the open subpaths its dash pattern actually inks. Works on
+# the tessellated path (Lines + circular Arcs only) rather than the raw geometry:
+# arc length is linear in t for both, so the split is exact arithmetic - dashing
+# splines directly would need a numerical arc-length inversion per cut.
 def _applyDash(path: Path, pattern: list[float], dashoffset: float, tolerance: float) -> list[Path]:
     tess = path.tessellate(tolerance, allowArcs=True)
     segments = tess.segments
@@ -197,8 +197,8 @@ def generateStroke(document: Document, settings: Settings):
 
         # the ink laid down by every pass of this object, and the true stroke band it is
         # meant to fill, both in clipper-int space - diffed after the loop to find what
-        # the passes missed (see below). spacing <= 0 has no coverage width to measure
-        # against, so there's nothing to detect
+        # the passes missed. spacing <= 0 has no coverage width to measure against, so
+        # there's nothing to detect
         needResidue = settings.generateGapInfill and spacing > 0
         needBands = needResidue or oneSided
         drawn: list = []
