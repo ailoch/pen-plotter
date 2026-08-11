@@ -1,8 +1,22 @@
 """Unit tests for lib/plot.py's gcode-emitting helpers."""
 import pytest
 
-from lib.plot import _LOAD_PROGRESS_MAX_INTERVAL, _LOAD_PROGRESS_MAX_STEP, _LOAD_PROGRESS_MIN_STEP, _waitForPen
+from lib.plot import _LOAD_PROGRESS_MAX_INTERVAL, _LOAD_PROGRESS_MAX_STEP, _LOAD_PROGRESS_MIN_STEP, _eValue, _waitForPen
 from lib.settings import Settings
+
+# --- E axis scaling (_eValue) -----------------------------------------------------
+
+@pytest.mark.parametrize("multiplier,expected", [(1, 10), (0.5, 5), (2, 20)])
+def testEValueScalesByTheMultiplier(multiplier, expected):
+    assert _eValue(Settings(eAxisMultiplier=multiplier), 10) == expected
+
+@pytest.mark.parametrize("multiplier", [0, -0.5, -3])
+def testNonPositiveMultiplierDropsE(multiplier):
+    """settings._validate warns that a multiplier <= 0 drops E from every draw move,
+    so every path to that must actually produce a droppable 0. A negative one is the
+    case that bites: _addLine elides falsy args, and a negative E is truthy, so it
+    would emit a *retraction* on every draw move rather than nothing at all."""
+    assert _eValue(Settings(eAxisMultiplier=multiplier), 10) == 0
 
 # --- pen-load wait (_waitForPen) --------------------------------------------------
 

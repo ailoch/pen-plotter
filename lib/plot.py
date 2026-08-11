@@ -174,6 +174,10 @@ def _addLine(state: _DrawState, settings: Settings, args: dict[str, str | float 
     if lineIsValid:
         file.write(line.strip() + "\n")
 
+# returns the E value for a draw move covering length mm
+def _eValue(settings: Settings, length: float) -> float:
+    return length * settings.eAxisMultiplier if settings.eAxisMultiplier > 0 else 0
+
 # emits a Z move (if needed) to the draw height for lineType - shared by draw-move
 # penMoves and by Arc draws, which (unlike Line draws) have no X/Y/Z move of their
 # own to piggyback a height change on since G2/G3 only carries the endpoint
@@ -202,7 +206,7 @@ def _penMove(state: _DrawState, settings: Settings, pos: complex, file: TextIO, 
                 _addLine(state, settings, {"G": "1", "X": str(pos.real), "Y": str(pos.imag)}, file, lineType or LineType.STROKE)
         else: # draw moves
             _setDrawHeight(state, settings, file, lineType, raised)
-            _addLine(state, settings, {"G": "1", "X": str(pos.real), "Y": str(pos.imag), "E": math.hypot(pos.real-state.pos["X"], pos.imag-state.pos["Y"]) * settings.eAxisMultiplier}, file, lineType or LineType.STROKE)
+            _addLine(state, settings, {"G": "1", "X": str(pos.real), "Y": str(pos.imag), "E": _eValue(settings, math.hypot(pos.real-state.pos["X"], pos.imag-state.pos["Y"]))}, file, lineType or LineType.STROKE)
             state.lastLineType = lineType or LineType.STROKE
 
 # emits one already-classified Line or Arc as a draw move under lineType - the body of
@@ -217,7 +221,7 @@ def _emitSegment(state: _DrawState, settings: Settings, segment: Line | Arc, fil
         _setDrawHeight(state, settings, file, lineType, raised)
         centerOffset = segment.center - segment.point(0)
         end = segment.point(1)
-        params = {"G": "2", "X": end.real, "Y": end.imag, "I": centerOffset.real, "J": centerOffset.imag, "E": segment.length() * settings.eAxisMultiplier}
+        params = {"G": "2", "X": end.real, "Y": end.imag, "I": centerOffset.real, "J": centerOffset.imag, "E": _eValue(settings, segment.length())}
         if segment.sweep < 0:
             params["G"] = "3"
         _addLine(state, settings, params, file, lineType)
