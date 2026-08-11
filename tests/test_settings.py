@@ -182,6 +182,24 @@ def testConsistentInfillSettingsAreSilent(tmp_path, processing, capsys):
     assert _warnings(capsys) == []
 
 
+def testPenNarrowerThanFillSpacingWarns(tmp_path, capsys):
+    """penWidth positions the first fill/stroke ring so the pen's real edge reaches
+    the true boundary - a pen narrower than fillSpacing can't actually get there."""
+    s = _load(tmp_path, {"processing": {"penWidth": 0.2, "fillSpacing": 0.3}})
+    assert s.penWidth == 0.2, "the value is still applied, only warned about"
+    assert any("penWidth" in w for w in _warnings(capsys))
+
+
+@pytest.mark.parametrize("processing", [
+    {"penWidth": 0.3, "fillSpacing": 0.3},  # equal - the pen just reaches the edge
+    {"penWidth": 0.5, "fillSpacing": 0.3},  # wider - the documented default relationship
+    {"penWidth": 0.1, "fillSpacing": 0, "generateGapInfill": False},  # narrower, but fill is disabled - no edge to miss
+], ids=["equal", "wider", "fill-disabled"])
+def testPenAtLeastAsWideAsFillSpacingIsSilent(tmp_path, processing, capsys):
+    _load(tmp_path, {"processing": processing})
+    assert _warnings(capsys) == []
+
+
 # ---------------------------------------------------------------- bad values
 
 

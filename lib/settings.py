@@ -71,17 +71,17 @@ class Settings:
     eAxisMultiplier: float = 1.0 # scales every emitted E value - reduces the raw commanded E rate the P1S planner throttles XY speed against; side effect: the slicer's total-filament stat scales down by the same factor
 
     # processing settings
-    tessellationTolerance: float = .012
-    fillSpacing: float = .3 # distance between concentric fill loops (mm); <= 0 disables fill
+    penWidth: float = .5 # expected ink width (mm)
+    fillSpacing: float = .3 # max distance (mm) between adjacent passes/loops before white paper shows through; <= 0 disables fill
     generateGapInfill: bool = True # if true, adds extra strokes to fill small gaps in the infill
     generateStroke: bool = True # if false, strokes draw as a single centerline pass regardless of strokeWidth (the pre-multi-pass behavior) instead of expanding to multiple passes
+    tessellationTolerance: float = .012
     showOutOfBounds: bool = False # if true, segments outside the canvas are still drawn, tagged LineType.INVALID for slicer-preview visibility; if false, they're cropped to the canvas edge
 
     prefixFile: str = "gcode_templates/default_prefix.gcode"
     suffixFile: str = "gcode_templates/default_suffix.gcode"
 
     # visualization settings
-    penWidth: float = .5
     showPenPos: bool = True
     objectHeightChange: bool = False
 
@@ -130,6 +130,8 @@ class Settings:
         self._validateBounds()
         if self.generateGapInfill and self.fillSpacing <= 0:
             print("Warning: generateGapInfill is enabled but infill is disabled; gap infill will have no effect")
+        if self.fillSpacing > 0 and self.penWidth < self.fillSpacing:
+            print("Warning: penWidth is narrower than fillSpacing; the pen may not actually reach the edge of filled/stroked shapes")
         if self.eAxisMultiplier <= 0:
             print("Warning: eAxisMultiplier <= 0 drops the E value from every draw move; the slicer will render the whole drawing as travel moves")
 

@@ -2,13 +2,22 @@
 
 Method, per PathObject:
   target   = the region SVG would paint - the resolved fill region (per
-             fill-rule) plus the stroke band (raw outline offset by
-             strokeWidth/2 with the object's own join/cap/miterlimit)
+             fill-rule), shrunk by FILL_EDGE_MARGIN, plus the stroke band (raw
+             outline offset by strokeWidth/2 with the object's own join/cap/
+             miterlimit)
   ink      = every drawn subpath's centerline swept by +/- fillSpacing/2
   uncovered = target - ink, opened at `tolerance` to discard the hairline
              seams that boolean ops on tessellated geometry always leave, then
              eroded by GAP_HALF_WIDTH_FRACTION * fillSpacing - whatever survives
              that is a gap too thick to blame on discretization
+
+FILL_EDGE_MARGIN excludes the outermost sliver of the fill region from target
+rather than from ink: generateInfill positions the fill's first ring penWidth/2
+- not the more conservative fillSpacing/2 this test sweeps ink by - back from
+that boundary, so the pen's real ink (assumed accurate to the configured
+penWidth) reaches it exactly. Shrinking target there means this test isn't
+faulting a boundary that's covered by construction, without loosening the
+fillSpacing/2 sweep everywhere else that actually catches real gaps.
 
 Overcoverage is fine - a doubled pen pass is invisible on paper. Undercoverage
 is the bug, so only the one direction is asserted.
@@ -245,15 +254,20 @@ def _measure(svgPath, settings):
     generateStroke(document, settings)
     generateInfill(document, settings)
 
+    # the sliver of the fill region nearest its own boundary that generateInfill's
+    # first ring is guaranteed to ink via the real pen (penWidth/2), beyond what the
+    # fillSpacing/2 sweep below would credit it for
+    fillEdgeMargin = max(0.0, settings.penWidth - spacing) / 2
+
     results = []
     for obj in document.objects:
         raw = rawByObj[id(obj)]
         if not raw:
             continue
-        target = _union(
-            _fillRegionOf(raw, obj.style, tolerance),
-            _strokeBandOf(raw, obj.style, tolerance),
-        )
+        fillRegion = _fillRegionOf(raw, obj.style, tolerance)
+        if fillRegion and fillEdgeMargin > 0:
+            fillRegion = _offsetPolys(fillRegion, -fillEdgeMargin)
+        target = _union(fillRegion, _strokeBandOf(raw, obj.style, tolerance))
         if not target:
             continue
         drawn = []

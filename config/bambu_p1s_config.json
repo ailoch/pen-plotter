@@ -30,10 +30,15 @@
 
     // controls what is drawn on paper
     "processing": {
-        "tessellationTolerance": 0.012, // max allowed deviation (mm) of gcode from the true curve
-        "fillSpacing": 0.3, // distance (mm) between concentric fill loops (infill and stroke passes); 0 disables fill
+        // penWidth is the real pen's ink width; fillSpacing is the distance between
+        // adjacent infill lines. Keep fillSpacing <= penWidth - real ink coverage varies
+        // with pen pressure, nib wear, and paper texture, so the interior tiling
+        // deliberately under-promises what one pass covers, ensuring that there is overlap between passes.
+        "penWidth": 0.35, // expected ink width (mm); also positions the first fill/stroke ring so the pen's real outer edge lands exactly on the true boundary
+        "fillSpacing": 0.3, // max distance (mm) between adjacent passes/loops before white paper shows through; 0 disables fill
         "generateGapInfill": true, // if true, adds extra strokes to fill small gaps in the infill
         "generateStroke": true, // if false, strokes draw as a single centerline pass regardless of strokeWidth (the pre-multi-pass behavior) instead of expanding to multiple passes
+        "tessellationTolerance": 0.012, // max allowed deviation (mm) of gcode from the true curve
         "showOutOfBounds": false, // if true, segments outside the canvas are still drawn, tagged as the "invalid" line type for slicer-preview visibility; if false (default), they're cropped to the canvas edge instead
 
         "prefixFile": "gcode_templates/bambu_p1s_prefix.gcode",
@@ -43,7 +48,6 @@
     // controls how the gcode looks in bambu studio
     // these settings do not affect the printed result
     "visualization": {
-        "penWidth": 0.35, // pen width in mm
         "showPenPos": true, // if false, nozzle position will be shown in slicer
         "objectHeightChange": true, // if true, slightly increases the height of every other object so they show as seperate layers when viewed in the slicer
 

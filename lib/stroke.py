@@ -260,9 +260,10 @@ def generateStroke(document: Document, settings: Settings):
         # one-sided: tile the outward half of the dash band (band minus the fill's
         # territory) with the same concentric-rings-plus-residue routine the fill uses,
         # so it inherits that coverage guarantee instead of needing its own argument.
-        # firstDelta = spacing/2 puts the first ring's outer ink edge on the region
-        # boundary, and rings inset from every boundary - including the centerline cut
-        # made by the difference - so the two halves abut there with no seam.
+        # firstDelta = penWidth/2 (the real pen's half-width, not the more conservative
+        # spacing/2 the interior tiling assumes) puts the first ring's actual ink edge on
+        # the region boundary, and rings inset from every boundary - including the
+        # centerline cut made by the difference - so the two halves abut there with no seam.
         if oneSided:
             if bands:
                 try:
@@ -271,7 +272,7 @@ def generateStroke(document: Document, settings: Settings):
                     print(f"Warning: pyclipper failed to split object {obj.id!r}'s dash band against its fill ({e}); skipping its stroke")
                     outward = []
                 if outward:
-                    _fillRegion(obj.geometry, outward, spacing, spacing / 2, tolerance, joinType, settings.generateGapInfill, str(obj.id), LineType.STROKE)
+                    _fillRegion(obj.geometry, outward, spacing, settings.penWidth / 2, tolerance, joinType, settings.generateGapInfill, str(obj.id), LineType.STROKE)
 
         # the passes tile the band evenly, but at a join sharp enough for the miterlimit
         # to bevel the spike, each pass gets clipped at a different point and they fan

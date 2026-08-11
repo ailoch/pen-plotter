@@ -542,10 +542,16 @@ def generateInfill(document: Document, settings: Settings):
         # sharper) raw outline. the strokeWidth/2 gap is folded into the first inset, so the
         # ring tiling still measures everything from the raw region boundary.
         #
+        # the first ring's own half of that inset is penWidth/2, not spacing/2: the ring's
+        # centerline needs to sit exactly penWidth/2 (the real pen's half-width) back from
+        # whatever boundary it's meeting, so the pen's actual ink - not the more conservative
+        # spacing/2 the interior tiling assumes - lands its outer edge exactly there instead
+        # of stopping short of it (a visible white sliver) or bleeding past it
+        #
         # a dashed stroke is deliberately excluded: it only inks part of that outer band,
         # so insetting past it would leave an uninked notch in every dash gap
         hasStroke = obj.style.strokeColor is not None and obj.style.strokeWidth > 0 and obj.style.dashPattern() is None
-        firstDelta = (obj.style.strokeWidth / 2 + spacing / 2) if hasStroke else spacing / 2
+        firstDelta = (obj.style.strokeWidth / 2 + settings.penWidth / 2) if hasStroke else settings.penWidth / 2
         joinType = _joinType(obj.style.linejoin) if hasStroke else pyclipper.JT_ROUND
 
         _fillRegion(obj.geometry, region, spacing, firstDelta, tolerance, joinType, settings.generateGapInfill, str(obj.id))
