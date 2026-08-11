@@ -8,6 +8,19 @@ try:
 except ImportError:
     pyclipper = None
 
+# small tolerance on the pass count calculation to prevent rounding errors giving
+# certian strokes extra passes
+_PASS_COUNT_REL_TOL = 1e-9
+
+def _passCount(strokeWidth: float, spacing: float) -> int:
+    if spacing <= 0:
+        return 1
+    ratio = strokeWidth / spacing
+    nearest = round(ratio)
+    if nearest >= 1 and math.isclose(ratio, nearest, rel_tol=_PASS_COUNT_REL_TOL):
+        return nearest
+    return max(1, math.ceil(ratio))
+
 # offsets from the centerline (in mm) for the passes making up one side of a stroke,
 # not counting a center pass. numPasses is the total conceptual pass count (center +
 # both sides, for a closed/two-sided stroke); s is the pitch between adjacent passes.
@@ -156,7 +169,7 @@ def generateStroke(document: Document, settings: Settings):
                 obj.geometry.append(centerPass)
             continue
 
-        numPasses = max(1, math.ceil(style.strokeWidth / spacing)) if spacing > 0 else 1
+        numPasses = _passCount(style.strokeWidth, spacing)
         s = style.strokeWidth / numPasses
         centerPassNeeded = numPasses % 2 == 1
 

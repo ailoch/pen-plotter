@@ -19,7 +19,7 @@ pyclipper = pytest.importorskip("pyclipper", reason="stroke generation needs pyc
 from lib.geometry import Arc, Document, Path, PathObject, Style, Transform
 from lib.infill import _SCALE, _toClipperPath, generateInfill
 from lib.settings import LineType
-from lib.stroke import _applyDash, _passDeltas, generateStroke
+from lib.stroke import _applyDash, _passCount, _passDeltas, generateStroke
 
 DRAWN = (LineType.STROKE, LineType.GAP_INFILL)
 
@@ -116,6 +116,46 @@ def testPassDeltasTileTheStrokeEvenly(numPasses):
     # the outermost pass inks out to delta + s/2, which has to land on the true edge
     assert positions[-1] + s / 2 == pytest.approx(width / 2)
     assert positions[0] - s / 2 == pytest.approx(-width / 2)
+
+
+# ------------------------------------------------------------------- pass count
+
+
+@pytest.mark.parametrize("width,spacing,expected", [
+    (0.1, 0.3, 1),   # hairline, well under one spacing
+    (0.29, 0.3, 1),  # just under - still one pass
+    (0.3, 0.3, 1),   # exactly one spacing: the boundary case, one centreline pass
+    (0.31, 0.3, 2),  # genuinely over, so a second pass is real
+    (0.6, 0.3, 2),
+    (2.0, 0.3, 7),   # 6.67 - a true non-multiple, must round up, not snap to 7 by luck
+    (2.1, 0.3, 7),   # 2.1/0.3 is 7.000000000000001 in floating point
+    (3.0, 0.3, 10),
+])
+def testPassCountRoundsUpOnlyWhenTheWidthGenuinelyExceedsTheSpacing(width, spacing, expected):
+    assert _passCount(width, spacing) == expected
+
+
+@pytest.mark.parametrize("width", [0.30000000000000004, 0.29999999999999993])
+def testPassCountIgnoresParseNoise(width):
+    """An authored stroke-width="0.3" comes back from svgelements' x96/25.4 space a
+    few ULPs off, and which side it lands on is a coin flip. Rounding up on the high
+    side costs the exact-geometry centre pass: the stroke stops being a deepcopy of
+    the source (arcs and beziers preserved) and becomes two tessellated offset rings.
+    """
+    assert _passCount(width, 0.3) == 1
+
+
+@pytest.mark.parametrize("spacing", [0, -1])
+def testNonPositiveSpacingIsASinglePass(spacing):
+    """spacing <= 0 disables fill entirely, so there's no pitch to tile against."""
+    assert _passCount(2.0, spacing) == 1
+
+
+@pytest.mark.parametrize("width,spacing", [(0.3, 0.3), (2.1, 0.3), (0.30000000000000004, 0.3), (5.0, 0.7)])
+def testPassCountNeverLetsThePitchExceedTheSpacing(width, spacing):
+    """The snap must not buy a lower pass count at the cost of a coarser pitch than
+    fillSpacing - that's the guarantee the whole tiling rests on."""
+    assert width / _passCount(width, spacing) <= spacing * (1 + 1e-9)
 
 
 # ----------------------------------------------------------------- stroke width
