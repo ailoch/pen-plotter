@@ -21,6 +21,8 @@ class _DrawState:
     lastAccel: float = 0
     lastLineType: LineType | None = None # role of the most recent draw move, for shortTravelThresholds' min-of-both-roles check
 
+#region object to gcode
+
 def _moveRect(state: _DrawState, settings: Settings, bounds: tuple[float, float, float, float], file: TextIO, lineType: LineType | None = None):
     edges: tuple[complex, complex, complex, complex] = (bounds[0], bounds[1]*1j, bounds[2], bounds[3]*1j)
 
@@ -331,16 +333,15 @@ def _addPath(state: _DrawState, settings: Settings, object: PathObject, file: Te
                 _moveRect(state, settings, segment.bounds(), file, LineType._SEGMENT_BOUNDS)
         _moveRect(state, settings, object.bounds(), file, LineType._PATH_BOUNDS)
 
+# endregion
+
+#region misc template helpers
+
 _EXCLUDE_EPS = 1e-6
 
 # drops points that don't change the polygon's shape
 def _removeRedundantPoints(points: list[tuple[float, float]]) -> list[tuple[float, float]]:
-    pts: list[tuple[float, float]] = []
-    for p in points:
-        if not pts or abs(p[0] - pts[-1][0]) > _EXCLUDE_EPS or abs(p[1] - pts[-1][1]) > _EXCLUDE_EPS:
-            pts.append(p)
-    if len(pts) > 1 and abs(pts[0][0] - pts[-1][0]) <= _EXCLUDE_EPS and abs(pts[0][1] - pts[-1][1]) <= _EXCLUDE_EPS:
-        pts.pop()
+    pts = list(points)
 
     changed = True
     while changed and len(pts) > 2:
@@ -352,13 +353,19 @@ def _removeRedundantPoints(points: list[tuple[float, float]]) -> list[tuple[floa
             nxt = pts[(i + 1) % len(pts)]
             ax, ay = cur[0] - prev[0], cur[1] - prev[1]
             bx, by = nxt[0] - cur[0], nxt[1] - cur[1]
-            # collinear (zero cross product) and pointing the same way (positive dot)
-            # -> cur is a redundant midpoint of a straight edge
-            if abs(ax * by - ay * bx) <= _EXCLUDE_EPS and (ax * bx + ay * by) > _EXCLUDE_EPS:
+            # collinear (zero cross product) -> cur is redundant, whether it's a
+            # straight-edge midpoint or a zero-width seam's reversal point (both
+            # leave the polygon's visible outline unchanged)
+            if abs(ax * by - ay * bx) <= _EXCLUDE_EPS:
                 pts.pop(i)
                 changed = True
             else:
                 i += 1
+
+    # the loop above only fires above 2 points, so a fully-degenerate input (every
+    # point coincident) can bottom out at a duplicate pair rather than a single point
+    if len(pts) == 2 and abs(pts[0][0] - pts[1][0]) <= _EXCLUDE_EPS and abs(pts[0][1] - pts[1][1]) <= _EXCLUDE_EPS:
+        return [pts[0]]
     return pts
 
 # joins two boundary contours into one polygon with a zero-width seam
@@ -477,6 +484,8 @@ def _waitForPen(settings: Settings) -> str:
     lines = [f"M73 P{round(100 * (steps - i) / steps)}\nG4 P{bounds[i+1] - bounds[i]}" for i in range(steps)]
     lines.append("M73 P0") # steps <= 100, so the last step above is P1 at the lowest
     return "\n".join(lines)
+
+#endregion
 
 # writes geom to fileOut as gcode, according to settings
 def createFile(geom: Document, settings: Settings, fileOut: str) -> bool:
