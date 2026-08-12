@@ -130,7 +130,7 @@ def _addLine(state: _DrawState, settings: Settings, args: dict[str, str | float 
     line = ""
     lineIsValid = False # lines must contain x, y, or z arg (g2/3 are exempt)
     for param, val in args.items():
-        if not val:
+        if val is None:
             continue
         # check if param is not already set to current value
         if param != "type":
@@ -158,6 +158,11 @@ def _addLine(state: _DrawState, settings: Settings, args: dict[str, str | float 
                 if feature != state.lastMoveType and "E" in args:
                     file.write(settings.styleChangeMessage % feature + "\n")
                     state.lastMoveType = feature # type: ignore
+                continue
+            case "E":
+                # E is the one param where 0 means "omit" rather than "a real zero"
+                if val != 0:
+                    line += f"{param}{_fmtNum(val)} "
                 continue
             case "F":
                 if val == state.lastSpeed:
