@@ -14,6 +14,18 @@ Converts an SVG drawing into G-code that drives a Bambu Lab P1S 3D printer as an
 
 All logic lives in `lib/`, importable for testing (no module-level side effects).
 
+## Comments & Docstrings
+
+- FOLLOW THESE DIRECTIONS. The user does not want to constantly remind you to adhere to them.
+- Not every change needs a comment. Skip it when the code reads clearly on its own.
+- Docstrings describe what a function accomplishes, treating it as a black box — not how callers use it or where it's called from. Put mechanism (how it works internally) in comments next to the relevant code, not the docstring.
+- Don't reference line numbers; they drift.
+- Don't say "see `file.py`"/"see `functionName`"/"see above" for more info, even pointing elsewhere in the same file, unless truly unavoidable — the reader shouldn't have to go find another spot to finish reading this one. State the needed fact inline instead.
+- Reach for a concrete example only when the prose explanation alone wouldn't land.
+- Don't narrate how a bug was found or debugged; state what's true about the code now.
+- Don't write about what the code used to be; github will tell us that.
+- Length limit: docstrings ~4-5 lines, comments ~2-3 lines, unless there's a specific reason to exceed it. Be prepared to defend yourself if you exceed them.
+
 ## Geometry Model
 
 [`lib/geometry.py`](lib/geometry.py): `Segment` (Line/Arc/QuadraticBezier/CubicBezier) → `Path` (list of segments plus a `lineType: LineType`, a subpath) → `PathObject` (list of Path + Style + Transform). `Document` = list of PathObjects. `lineType` (from `lib/settings.py`'s `LineType` enum — `RAW_GEOMETRY`/`STROKE`/`INFILL`/`GAP_INFILL`/`TRAVEL`/bounds-debug values) tags which draw role a subpath belongs to; it lives on `Path` rather than `Style` because a single `PathObject` mixes roles (stroke passes vs. infill loops vs. gap-fill strokes) once stroke/infill generation runs. Defaults to `RAW_GEOMETRY` — the un-stroked, un-filled centerline geometry parsed straight from the SVG, which is a *source* for stroke/fill generation rather than something drawn directly (it has no `heights`/`speeds`/`accels`/`shortTravelThresholds` entry of its own, since nothing should ever emit it as gcode); `tessellate()` carries whatever `lineType` a `Path` has through onto the returned `Path`. `lib/stroke.py`'s `dropRawGeometry` removes every `RAW_GEOMETRY` subpath (and any object left with none) right after stroke+infill generation, before routing ever runs — `lib/plot.py`'s `_addPath` also skips the role defensively, but by construction should never see one.
@@ -114,17 +126,6 @@ Set `debug.profiling: true` in the config file to run under `cProfile` and print
 ## Dependencies
 
 `pyclipper` (infill polygon offsetting), `svgelements` (SVG parsing), `commentjson` (JSONC), `scipy` (arc-length integration; also `scipy.spatial.Voronoi` for the infill medial-axis gap fill — imported lazily there so its absence just falls back to loop gap fill). `pyclipper` has no type stubs; `typings/pyclipper/__init__.pyi` is hand-cleaned via `stubgen`.
-
-## Comments & Docstrings
-
-- Not every change needs a comment. Skip it when the code reads clearly on its own.
-- Docstrings describe what a function accomplishes, treating it as a black box — not how callers use it or where it's called from. Put mechanism (how it works internally) in comments next to the relevant code, not the docstring.
-- Don't reference line numbers; they drift.
-- Don't say "see `file.py`"/"see `functionName`"/"see above" for more info, even pointing elsewhere in the same file, unless truly unavoidable — the reader shouldn't have to go find another spot to finish reading this one. State the needed fact inline instead.
-- Reach for a concrete example only when the prose explanation alone wouldn't land.
-- Don't narrate how a bug was found or debugged; state what's true about the code now.
-- Don't write about what the code used to be; github will tell us that.
-- Length budget: docstrings ~4-5 lines, comments ~2-3 lines, unless there's a specific reason to exceed it.
 
 ## Files
 
