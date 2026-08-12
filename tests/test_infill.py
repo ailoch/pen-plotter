@@ -59,6 +59,13 @@ def _inHole(pt: complex) -> bool:
     return 5 < pt.real < 15 and 5 < pt.imag < 15
 
 
+def _wedge() -> PathObject:
+    """A long acute triangle: too thin for the ring tiling to reach the tip, so it
+    always leaves residue for the gap fill to deal with."""
+    return PathObject("wedge", [Path.fromPoints([0 + 0j, 40 + 0j, 40 + 3j], closed=True)],
+                      Style(fillColor=[0, 0, 0], strokeColor=None), Transform())
+
+
 #endregion
 
 
@@ -81,3 +88,19 @@ def testNonzeroFillsTheHole(settings):
     obj = _filledDonut("nonzero", settings)
     inside = [p for p in _inkPoints(obj, settings.tessellationTolerance) if _inHole(p)]
     assert inside, "nonzero should fill the centre, but no ink landed inside it"
+
+
+def testThinResidueIsFilledWithMedialAxisStrokes(settings):
+    """A piece too thin to survive a spacing/2 erosion is drawn as its skeleton -
+    open centreline strokes, one pen pass, rather than the doubled-back loops a
+    concentric fill would leave. (Without scipy this falls back to those loops
+    instead; that path is test_fallbacks.py's.)"""
+    pytest.importorskip("scipy.spatial", reason="the medial axis needs scipy")
+    obj = _wedge()
+    document = Document()
+    document.add(obj)
+    generateInfill(document, settings)
+
+    gapFill = [p for p in obj.geometry if p.lineType == LineType.GAP_INFILL]
+    assert gapFill, "an acute wedge should leave residue for the gap fill"
+    assert not any(p.isClosed() for p in gapFill)
