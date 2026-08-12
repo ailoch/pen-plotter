@@ -161,7 +161,7 @@ def generateStroke(document: Document, settings: Settings):
         # directly as a single STROKE pass (the pre-multi-pass behavior)
         if not settings.generateStroke or pyclipper is None:
             if pyclipper is None and not warnedMissingPyclipper:
-                print("Warning: pyclipper is not installed (pip install pyclipper); drawing strokes as a single centerline pass")
+                print("Warning: pyclipper is not installed (pip install pyclipper); drawing strokes as a single centerline pass.")
                 warnedMissingPyclipper = True
             for p in rawSubpaths:
                 centerPass = copy.deepcopy(p)
@@ -191,7 +191,7 @@ def generateStroke(document: Document, settings: Settings):
             try:
                 fillRegion = _resolveFillRegion(obj, tolerance)
             except pyclipper.ClipperException as e:
-                print(f"Warning: pyclipper failed to resolve fill region for object {obj.id!r} ({e}); drawing its dashes two-sided")
+                print(f"Warning: pyclipper failed to resolve fill region for object {obj.id!r} ({e}); drawing its dashes two-sided.")
                 fillRegion = []
         oneSided = bool(fillRegion)
 
@@ -243,7 +243,7 @@ def generateStroke(document: Document, settings: Settings):
                     # contour wrapping both sides plus caps
                     result = pco.Execute(delta * _SCALE)
                 except pyclipper.ClipperException as e:
-                    print(f"Warning: pyclipper stroke offset failed for object {obj.id!r} at delta {delta:g}mm ({e}); skipping this pass")
+                    print(f"Warning: pyclipper stroke offset failed for object {obj.id!r} at delta {delta:g}mm ({e}); skipping this pass.")
                     continue
                 for contour in result:
                     _appendLoop(obj.geometry, contour, LineType.STROKE, tolerance)
@@ -255,7 +255,7 @@ def generateStroke(document: Document, settings: Settings):
                 try:
                     bands.extend(pco.Execute(style.strokeWidth / 2 * _SCALE))
                 except pyclipper.ClipperException as e:
-                    print(f"Warning: pyclipper stroke band offset failed for object {obj.id!r} ({e}); skipping its gap fill")
+                    print(f"Warning: pyclipper stroke band offset failed for object {obj.id!r} ({e}); skipping its gap fill.")
 
         # one-sided: tile the outward half of the dash band (band minus the fill's
         # territory) with the same concentric-rings-plus-residue routine the fill uses,
@@ -269,7 +269,7 @@ def generateStroke(document: Document, settings: Settings):
                 try:
                     outward = _difference(bands, [fillRegion])
                 except pyclipper.ClipperException as e:
-                    print(f"Warning: pyclipper failed to split object {obj.id!r}'s dash band against its fill ({e}); skipping its stroke")
+                    print(f"Warning: pyclipper failed to split object {obj.id!r}'s dash band against its fill ({e}); skipping its stroke.")
                     outward = []
                 if outward:
                     _fillRegion(obj.geometry, outward, spacing, settings.penWidth / 2, tolerance, joinType, settings.generateGapInfill, str(obj.id), LineType.STROKE)
@@ -283,7 +283,7 @@ def generateStroke(document: Document, settings: Settings):
             try:
                 residue = _difference(bands, [_coverageBand(drawn, spacing / 2)])
             except pyclipper.ClipperException as e:
-                print(f"Warning: pyclipper stroke residue detection failed for object {obj.id!r} ({e}); skipping its gap fill")
+                print(f"Warning: pyclipper stroke residue detection failed for object {obj.id!r} ({e}); skipping its gap fill.")
                 residue = []
             _drawResidue(obj.geometry, residue, spacing, tolerance, str(obj.id))
 

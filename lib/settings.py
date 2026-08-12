@@ -113,34 +113,34 @@ class Settings:
         # physical bed-frame numbers the plate rect uses, so this is a direct compare
         safeZoneInPlate = contains(0, self.plateSize, self.safeZoneOffset, self.safeZoneSize)
         if not safeZoneInPlate:
-            print("Warning: safe zone is not fully inside the plate; pen/toolhead may collide while drawing")
+            print("Warning: safe zone is not fully inside the plate; pen/toolhead may collide while drawing.")
 
         canvasInSafeZone = contains(self.safeZoneOffset, self.safeZoneSize, self.canvasOffset, self.canvasSize)
         if not canvasInSafeZone:
-            print("Warning: canvas (draw zone) is not fully inside the safe zone; pen/toolhead may collide while drawing")
+            print("Warning: canvas (draw zone) is not fully inside the safe zone; pen/toolhead may collide while drawing.")
 
         # the nozzle's actual gcode movement, driving the pen across the safe zone,
         # sits at safeZoneOffset - penOffset (nozzle = pen - penOffset)
         nozzleMovementInPlate = contains(0, self.plateSize, self.safeZoneOffset - self.penOffset, self.safeZoneSize)
         if not nozzleMovementInPlate:
-            print("Warning: safe zone (accounting for penOffset) is not fully inside the plate; nozzle may collide while drawing")
+            print("Warning: safe zone (accounting for penOffset) is not fully inside the plate; nozzle may collide while drawing.")
 
     # warns user about invalid/inconsistent setting combinations; never resets to defaults
     def _validate(self):
         self._validateBounds()
         if self.generateGapInfill and self.fillSpacing <= 0:
-            print("Warning: generateGapInfill is enabled but infill is disabled; gap infill will have no effect")
+            print("Warning: generateGapInfill is enabled but infill is disabled; gap infill will have no effect.")
         if self.fillSpacing > 0 and self.penWidth < self.fillSpacing:
-            print("Warning: penWidth is narrower than fillSpacing; the pen may not actually reach the edge of filled/stroked shapes")
+            print("Warning: penWidth is narrower than fillSpacing; the pen may not actually reach the edge of filled/stroked shapes.")
         if self.eAxisMultiplier <= 0:
-            print("Warning: eAxisMultiplier <= 0 drops the E value from every draw move; the slicer will render the whole drawing as travel moves")
+            print("Warning: eAxisMultiplier <= 0 drops the E value from every draw move; the slicer will render the whole drawing as travel moves.")
 
     def initFromJson(self, path):
         try:
             with open(path) as f:
                 text = f.read()
         except FileNotFoundError:
-            print(f"Settings file '{path}' does not exist. Using default settings.")
+            print(f"Warning: settings file '{path}' does not exist; using default settings.")
             return
 
         try:
@@ -157,11 +157,11 @@ class Settings:
                     commentjson.commentjson.parser.parse(text)
                 except Exception as parseError:
                     cause = parseError
-            print(f"Failed to parse settings file '{path}': {str(cause).splitlines()[0]}. Using default settings.")
+            print(f"Warning: failed to parse settings file '{path}' ({str(cause).splitlines()[0]}); using default settings.")
             return
 
         if not isinstance(data, dict) or not all(isinstance(section, dict) for section in data.values()):
-            print(f"Settings file '{path}' must be a JSON object of objects (sections containing settings). Using default settings.")
+            print(f"Warning: settings file '{path}' must be a JSON object of objects (sections containing settings); using default settings.")
             return
 
         allowed = {f.name for f in fields(self)}
@@ -171,7 +171,7 @@ class Settings:
         for sectionName, data in data.items():
             for settingName, setting in data.items():
                 if settingName not in allowed:
-                    print(f"Unknown setting {sectionName}.{settingName}")
+                    print(f"Warning: unknown setting '{settingName}' found while reading {sectionName} in '{path}'.")
                     continue
 
                 if settingName not in specialTypeSettings:
@@ -179,7 +179,7 @@ class Settings:
                     if expectedType == float and type(setting) == int:
                         setting = float(setting)
                     if type(setting) != expectedType:
-                        print(f"Wrong type for setting {sectionName}.{settingName}: expected {expectedType.__name__}, got {type(setting).__name__}")
+                        print(f"Warning: wrong type for setting {sectionName}.{settingName} in '{path}'; expected {expectedType.__name__}, got {type(setting).__name__}.")
                         continue
                 setting = cast(Any, setting)
 
@@ -200,26 +200,26 @@ class Settings:
                                 # speeds needs to be converted mm/min -> mm/s
                                 temp[_LINE_TYPE_KEYS[k]] = v*60 if settingName == "speeds" else v
                             else:
-                                print(f"Unknown move type '{k}' (reading {sectionName}.{settingName})")
+                                print(f"Warning: unknown move type '{k}' found while reading {sectionName}.{settingName} in '{path}'.")
                         setattr(self, settingName, temp)
                     case "penOffset" | "plateSize" | "safeZoneSize" | "safeZoneOffset" | "canvasSize" | "canvasOffset" | "endPos":
                         if not isinstance(setting, list) or len(setting) != 2:
-                            print(f"Wrong type for setting {sectionName}.{settingName}: expected a 2-element list")
+                            print(f"Warning: wrong type for setting {sectionName}.{settingName} in '{path}'; expected a 2-element list.")
                             continue
                         setattr(self, settingName, complex(setting[0], setting[1]))
                     case "startPos":
                         if not isinstance(setting, list) or len(setting) != 3:
-                            print(f"Wrong type for setting {sectionName}.startPos: expected a 3-element list")
+                            print(f"Warning: wrong type for setting {sectionName}.startPos in '{path}'; expected a 3-element list.")
                             continue
                         self.startPos = dict(zip(("X", "Y", "Z"), setting))
                     case "instructionTypes":
                         if not isinstance(setting, list) or len(setting) != 4 or not all(isinstance(v, str) for v in setting):
-                            print(f"Wrong type for setting {sectionName}.instructionTypes: expected a 4-element list of strings")
+                            print(f"Warning: wrong type for setting {sectionName}.instructionTypes in '{path}'; expected a 4-element list of strings.")
                             continue
                         self.instructionTypes = tuple(setting) # type: ignore
                     case "segmentTypes":
                         if not isinstance(setting, list) or not all(isinstance(v, str) for v in setting):
-                            print(f"Wrong type for setting {sectionName}.segmentTypes: expected a list of strings")
+                            print(f"Warning: wrong type for setting {sectionName}.segmentTypes in '{path}'; expected a list of strings.")
                             continue
                         self.segmentTypes = tuple(setting)
                     case "maxVerticalSpeed":
@@ -228,13 +228,13 @@ class Settings:
                         if setting.upper() in _ALIGNMENTS:
                             setattr(self, settingName, setting.upper())
                         else:
-                            print(f"Unknown alignment '{setting}' (reading {sectionName}.{settingName}); expected one of {_ALIGNMENTS}")
+                            print(f"Warning: unknown alignment '{setting}' found while reading {sectionName}.{settingName} in '{path}'; expected one of {_ALIGNMENTS}.")
                     case "style":
                         allowedStyles = ("role", "instruction", "segment")
                         if setting.lower() in allowedStyles:
                             self.style = setting.lower()
                         else:
-                            print(f"Unknown style '{setting}' (reading {sectionName}.style)")
+                            print(f"Warning: unknown style type '{setting}' found while reading {sectionName}.style in '{path}'.")
                     case _:
                         setattr(self, settingName, setting)
 

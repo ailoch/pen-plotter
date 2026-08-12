@@ -82,22 +82,24 @@ def _evalTemplateNode(node: ast.AST, replace: dict[str, str | float]):
 # using eval() here would allow executing arbitrary python code from an input file
 # parsing the ast like this guards against arbitrary code execution
 # on failure, original {...} text is left untouched and a warning is printed
-def _evalTemplateBlock(expr: str, replace: dict[str, str | float]) -> str:
+def _evalTemplateBlock(expr: str, replace: dict[str, str | float], sourceName: str = "") -> str:
     try:
         result = _evalTemplateNode(ast.parse(expr, mode="eval"), replace)
     except Exception as e:
-        print(f"Warning: could not evaluate gcode template expression '{{{expr}}}' ({e}); leaving it as-is")
+        location = f" in '{sourceName}'" if sourceName else ""
+        print(f"Warning: could not evaluate gcode template expression '{{{expr}}}'{location} ({e}); leaving it as-is.")
         return "{" + expr + "}"
     if isinstance(result, (int, float)):
         return _fmtNum(result)
     return str(result)
 
 # adds the contents of srcFile to the end of destFile, evaluating each {...} block as
-# an arithmetic expression against replace and substituting in the result
-def _fileAppend(srcFile: TextIO, destFile: TextIO, replace: dict[str, str | float] = {}):
+# an arithmetic expression against replace and substituting in the result. sourceName
+# (the template's own path) only affects the warning printed for a bad block
+def _fileAppend(srcFile: TextIO, destFile: TextIO, replace: dict[str, str | float] = {}, sourceName: str = ""):
     for line in srcFile:
         if "{" in line: # this saves time because the regex sub below is slower and most lines don't need it
-            line = _TEMPLATE_BLOCK.sub(lambda m: _evalTemplateBlock(m.group(1), replace), line)
+            line = _TEMPLATE_BLOCK.sub(lambda m: _evalTemplateBlock(m.group(1), replace, sourceName), line)
         destFile.write(line)
 
 # the next feature name in visualization.style == "segment"'s cycle, given the
@@ -234,7 +236,7 @@ def _emitSegment(state: _DrawState, settings: Settings, segment: Line | Arc, fil
         _addLine(state, settings, params, file, lineType)
         state.lastLineType = lineType or LineType.STROKE
     else:
-        print(f"Unknown path type {type(segment)}")
+        print(f"Warning: unknown path type {type(segment)}; skipping it.")
 
 # the canvas rect in nozzle/gcode space, as (xmin, ymin, xmax, ymax) - segment
 # coordinates (post parseSvg transform) are always nozzle space (pen space minus
@@ -317,7 +319,7 @@ def _addPath(state: _DrawState, settings: Settings, object: PathObject, file: Te
 
         for i, segment in enumerate(segments):
             if not isinstance(segment, (Line, Arc)):
-                print(f"Unknown path type {type(segment)}")
+                print(f"Warning: unknown path type {type(segment)} found while drawing object '{object.id}'; skipping it.")
                 continue
             if firstSegColor is not None and i == len(segments) - 1:
                 _skipRepeatedClosingColor(state, settings, firstSegColor)
@@ -503,7 +505,7 @@ def createFile(geom: Document, settings: Settings, fileOut: str) -> bool:
     except (FileNotFoundError, PermissionError):
         # a temp-file path inside outDir means nothing to the user, who only typed
         # fileOut - report that instead, whether outDir doesn't exist or isn't writable
-        print(f'Could not open file "{fileOut}". The directory may not exist or may not be writable.')
+        print(f"Error: could not open file '{fileOut}'; the directory may not exist or may not be writable.")
         return False
 
     try:
@@ -526,7 +528,7 @@ def createFile(geom: Document, settings: Settings, fileOut: str) -> bool:
             replace["BED_EXCLUDE_AREA"] = _bedExcludeArea(settings.plateSize, canvasMin, canvasMin + settings.canvasSize)
 
             with open(settings.prefixFile, "r") as srcFile:
-                _fileAppend(srcFile, destFile, replace)
+                _fileAppend(srcFile, destFile, replace, settings.prefixFile)
             destFile.write("\n")
 
             objectCount = 0
@@ -541,25 +543,25 @@ def createFile(geom: Document, settings: Settings, fileOut: str) -> bool:
 
             destFile.write("\n")
             with open(settings.suffixFile, "r") as srcFile:
-                _fileAppend(srcFile, destFile, replace)
+                _fileAppend(srcFile, destFile, replace, settings.suffixFile)
         os.replace(tempPath, fileOut)
         tempPath = None
         if outOfBoundsNames:
-            action = "Marked as invalid" if settings.showOutOfBounds else "Cropped"
-            print(f"\n{action} lines outside the canvas in: {', '.join(outOfBoundsNames)}")
+            action = "marked as invalid" if settings.showOutOfBounds else "cropped"
+            print(f"\nWarning: geometry outside the canvas was {action} in: {', '.join(outOfBoundsNames)}.")
         return True
     except PermissionError as e:
         # os.replace(tempPath, fileOut) reports its src (tempPath) as e.filename
         # even when the real problem is fileOut being locked - show fileOut
         # instead so the message points at a path the user recognizes
         badFile = fileOut if e.filename == tempPath else e.filename
-        print(f'Could not open file "{badFile}". Another program might be editing it.')
+        print(f"Error: could not open file '{badFile}'; another program might be editing it.")
     except FileNotFoundError as e:
         # os.replace(tempPath, fileOut) reports its src (tempPath) as e.filename
         # even when the real problem is outDir having vanished mid-write - show
         # fileOut instead so the message points at a path the user recognizes
         badFile = fileOut if e.filename == tempPath else e.filename
-        print(f'Could not find file "{badFile}".')
+        print(f"Error: could not find file '{badFile}'.")
     finally:
         if tempPath and os.path.exists(tempPath):
             os.remove(tempPath)

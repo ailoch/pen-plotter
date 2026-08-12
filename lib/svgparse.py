@@ -214,7 +214,7 @@ def parseSvgElement(node: svgelements.SVGElement, docTransform: Transform, docum
                 currentSegments.append(Line(current, start))
                 current = start
             else:
-                print(f"Unknown path element: {type(part)} (part of {node.id})")
+                print(f"Warning: unknown path element {type(part)} found while parsing '{node.id}'; skipping it.")
         finalizeSubpath()
         if temp.geometry: # skip degenerate/empty shapes (e.g. d="", coincident line endpoints) -
             document.add(temp) # nothing to draw, and an empty Path would crash later in the pipeline
@@ -225,7 +225,7 @@ def parseSvgElement(node: svgelements.SVGElement, docTransform: Transform, docum
     elif isinstance(node, svgelements.SVG) or type(node) == svgelements.svgelements.SVGElement:
         pass # these element types can be safely ignored because they are not geometry
     else:
-        print(f"Ignored {type(node)} with name {node.id}")
+        print(f"Warning: ignored unsupported element type {type(node)} named '{node.id}'.")
 
 # asks the user how to reconcile a viewport size that doesn't match the canvas size,
 # returning the (scaleX, scaleY) factors to apply to the drawing.
@@ -261,11 +261,11 @@ def loadSvg(svgPath: str) -> svgelements.SVG:
     try:
         svg = svgelements.SVG.parse(svgPath)
     except Exception as e:
-        raise SvgParseError(f"Failed to parse SVG file '{svgPath}' ({e})") from e
+        raise SvgParseError(f"Error: failed to parse SVG file '{svgPath}' ({e}).") from e
     if svg.viewbox is None:
-        raise SvgParseError(f"SVG file '{svgPath}' has no viewBox attribute; this converter requires one to determine the drawing's size")
+        raise SvgParseError(f"Error: SVG file '{svgPath}' has no viewBox attribute; this converter requires one to determine the drawing's size.")
     if cast(float, svg.viewbox.width) <= 0 or cast(float, svg.viewbox.height) <= 0:
-        raise SvgParseError(f"SVG file '{svgPath}' has a non-positive viewBox width/height ({svg.viewbox}); per the SVG spec this is an error")
+        raise SvgParseError(f"Error: SVG file '{svgPath}' has a non-positive viewBox width/height ({svg.viewbox}); this violates the SVG spec.")
     return svg
 
 # thin wrapper unpacking svg.viewbox for _promptRescale. interactive, so kept out of
@@ -300,5 +300,5 @@ def parseSvg(svg: svgelements.SVG, settings: Settings, scaleX: float, scaleY: fl
         path.transform *= [scaleX, 0, 0, -scaleY, translateX, translateY]
         path.applyTransformations()
     if textNames:
-        print(f"\nThis converter does not support text. In Inkscape, select the text and go to Path > Object to Path to convert it to lines this converter can draw. Text not included in the output gcode: {', '.join(textNames)}")
+        print(f"\nWarning: this converter does not support text. In Inkscape, select the text and go to Path > Object to Path to convert it to lines this converter can draw. Text not included in the output gcode: {', '.join(textNames)}.")
     return document

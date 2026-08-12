@@ -138,6 +138,16 @@ def testFileAppendSubstitutesEveryBlockAndCopiesPlainLines():
     _fileAppend(src, dest, _TEMPLATE_NS)
     assert dest.getvalue() == "G1 F3000\n; no braces here\nX1500 Y0x2\n"
 
+def testTemplateWarningNamesItsSourceFile(capsys):
+    """createFile passes its own prefix/suffix path through as sourceName, so a bad
+    block in one names *which* template file it came from."""
+    _evalTemplateBlock("NOPE", _TEMPLATE_NS, "gcode_templates/my_prefix.gcode")
+    assert "gcode_templates/my_prefix.gcode" in capsys.readouterr().out
+
+def testTemplateWarningOmitsLocationWhenNoneIsGiven(capsys):
+    _evalTemplateBlock("NOPE", _TEMPLATE_NS)
+    assert " in ''" not in capsys.readouterr().out
+
 
 #endregion
 
@@ -710,12 +720,19 @@ def testAnUnwritableDirectoryIsReportedAgainstTheUsersPath(tmp_path, templates, 
     assert str(out) in capsys.readouterr().out
 
 def testOutOfBoundsObjectsAreReportedOnce(tmp_path, templates, capsys):
+    """One combined warning per run, not one per object or per out-of-bounds segment:
+    "first" has two out-of-bounds segments but must still be named only once, and
+    "second" must land in that same warning rather than getting its own."""
     doc = Document()
-    doc.add(PathObject("spill", [Path([Line(30 + 30j, 500 + 500j)], LineType.STROKE)]))
+    doc.add(PathObject("first", [Path([Line(30 + 30j, 500 + 500j), Line(500 + 500j, 30 + 500j)], LineType.STROKE)]))
+    doc.add(PathObject("second", [Path([Line(30 + 30j, -500 - 500j)], LineType.STROKE)]))
     out = tmp_path / "out.gcode"
     createFile(doc, _fileSettings(templates), str(out))
     printed = capsys.readouterr().out
-    assert "Cropped" in printed and "spill" in printed
+
+    assert printed.count("outside the canvas") == 1, "a single combined warning, not one per object/segment"
+    assert printed.count("first") == 1, "an object with two out-of-bounds segments is still named only once"
+    assert "second" in printed
 
 
 #endregion

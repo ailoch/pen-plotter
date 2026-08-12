@@ -2,9 +2,9 @@
 
 Automated tests (pytest) plus the SVG fixtures they and manual inspection run
 against. Every fixture element carries an `id` naming **what it tests**; the
-parser prints that `id` when it drops an unsupported element (`Ignored <type>
-with name <id>`) or warns about text, so a dropped case is self-identifying in
-the console.
+parser prints that `id` when it drops an unsupported element (`Warning: ignored
+unsupported element type <type> named '<id>'.`) or warns about text, so a
+dropped case is self-identifying in the console.
 
 ## Running
 

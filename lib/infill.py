@@ -116,7 +116,7 @@ def _concentricLoops(polygons: list, spacing: float, firstDelta: float, toleranc
         try:
             result = pco.Execute(-delta * _SCALE)
         except pyclipper.ClipperException as e:
-            print(f"Warning: pyclipper offset failed for object {objId!r} at step {step} ({e}); stopping infill for it")
+            print(f"Warning: pyclipper offset failed for object {objId!r} at step {step} ({e}); stopping infill for it.")
             break
         if not result:
             break
@@ -393,7 +393,7 @@ def _drawResidue(geometry: list[Path], residue: list, spacing: float, tolerance:
             return
         opened = _offsetPolys(eroded, eps, asTree=True)
     except pyclipper.ClipperException as e:
-        print(f"Warning: pyclipper residue cleanup failed for object {objId!r} ({e}); skipping some gap fill")
+        print(f"Warning: pyclipper residue cleanup failed for object {objId!r} ({e}); skipping some gap fill.")
         return
 
     # drop specks below a stroke-sized area so we don't pepper the drawing with dots -
@@ -459,7 +459,7 @@ def _fillRegion(geometry: list[Path], region: list, spacing: float, firstDelta: 
             ring = inset(center)
             annulusInner = inset(innerInset) if generateGapInfill else []
         except pyclipper.ClipperException as e:
-            print(f"Warning: pyclipper offset failed for object {objId!r} at ring {k} ({e}); stopping infill for it")
+            print(f"Warning: pyclipper offset failed for object {objId!r} at ring {k} ({e}); stopping infill for it.")
             break
         # annulusInner is only computed for the gapfill path; without it the next
         # iteration re-offsets its outer edge fresh
@@ -473,7 +473,7 @@ def _fillRegion(geometry: list[Path], region: list, spacing: float, firstDelta: 
                 coverage = _coverageBand(ring, s / 2)
                 residue = _difference(annulusOuter, [annulusInner, coverage])
             except pyclipper.ClipperException as e:
-                print(f"Warning: pyclipper residue detection failed for object {objId!r} at ring {k} ({e}); skipping its gap fill")
+                print(f"Warning: pyclipper residue detection failed for object {objId!r} at ring {k} ({e}); skipping its gap fill.")
                 residue = []
             _drawResidue(geometry, residue, s, tolerance, objId)
 
@@ -505,7 +505,7 @@ def generateInfill(document: Document, settings: Settings):
     spacing = settings.fillSpacing
     tolerance = settings.tessellationTolerance
     if spacing > 0 and pyclipper is None:
-        print("Warning: pyclipper is not installed (pip install pyclipper); skipping infill generation")
+        print("Warning: pyclipper is not installed (pip install pyclipper); skipping infill generation.")
 
     for obj in document.objects:
         if obj.style.fillColor is None:
@@ -531,7 +531,7 @@ def generateInfill(document: Document, settings: Settings):
         try:
             region = _resolveFillRegion(obj, tolerance)
         except pyclipper.ClipperException as e:
-            print(f"Warning: pyclipper failed to resolve fill region for object {obj.id!r} ({e}); skipping infill for it")
+            print(f"Warning: pyclipper failed to resolve fill region for object {obj.id!r} ({e}); skipping infill for it.")
             continue
         if not region:
             continue

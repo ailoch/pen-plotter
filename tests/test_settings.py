@@ -48,13 +48,12 @@ def _assertDefaultSettings(s: Settings):
 
 
 def _warnings(capsys) -> list[str]:
-    """Every printed line that reports a problem, ignoring the success banner."""
+    """Every printed line that reports a problem, ignoring the success banner.
+
+    Every one of initFromJson's problem messages starts with "Warning:", so this
+    is the one thing that filter needs to check."""
     out = capsys.readouterr().out
-    return [
-        ln for ln in out.splitlines()
-        if ln.startswith(("Warning:", "Wrong type", "Unknown", "Failed to parse"))
-        or "does not exist" in ln or "must be a JSON object" in ln
-    ]
+    return [ln for ln in out.splitlines() if ln.startswith("Warning:")]
 
 
 #endregion
@@ -76,7 +75,7 @@ def testMalformedJsonFallsBackToDefaults(capsys):
     _assertDefaultSettings(s)
 
     out = capsys.readouterr().out
-    assert "Failed to parse" in out
+    assert "failed to parse" in out
     # the whole point of the ValueError re-parse in initFromJson is that the
     # message is one readable line, not a dump of the entire source text
     assert len(out.splitlines()) <= 2, f"parse error should be one line, got:\n{out}"
@@ -240,6 +239,16 @@ def testUnknownMoveTypeIsReported(tmp_path, capsys):
     s = _load(tmp_path, {"motion": {"heights": {"stroke": 1, "sprinkle": 2}}})
     assert s.heights == {LineType.STROKE: 1}, "unknown move types must not land in the dict"
     assert any("sprinkle" in w for w in _warnings(capsys))
+
+
+def testWarningsNameTheOffendingSettingsFile(tmp_path, capsys):
+    """Every reported problem below the file-level checks names the config file it
+    came from - the only way to tell two configs' warnings apart in a combined log."""
+    path = tmp_path / "config.json"
+    path.write_text('{"processing": {"filSpacing": 1.0}}', encoding="utf-8")
+    Settings().initFromJson(str(path))
+    warned = _warnings(capsys)
+    assert warned and all(str(path) in w for w in warned)
 
 
 #endregion
