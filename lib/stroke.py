@@ -1,7 +1,7 @@
 import copy, math
 from lib.geometry import Document, Path, Segment
 from lib.settings import LineType, Settings
-from lib.infill import _SCALE, _appendLoop, _coverageBand, _difference, _drawArcTolerance, _drawResidue, _fillRegion, _joinType, _resolveFillRegion, _toClipperPath
+from lib.infill import _SCALE, _appendLoop, _coverageBand, _difference, _drawArcTolerance, _drawResidue, _fillRegion, _joinType, _offsetPolys, _resolveFillRegion, _toClipperPath
 
 try:
     import pyclipper
@@ -272,7 +272,7 @@ def generateStroke(document: Document, settings: Settings):
                     print(f"Warning: pyclipper failed to split object {obj.id!r}'s dash band against its fill ({e}); skipping its stroke.")
                     outward = []
                 if outward:
-                    _fillRegion(obj.geometry, outward, spacing, settings.penWidth / 2, tolerance, joinType, settings.generateGapInfill, str(obj.id), LineType.STROKE)
+                    _fillRegion(obj.geometry, outward, spacing, settings.penWidth / 2, tolerance, joinType, settings.generateGapInfill, str(obj.id), settings.penWidth, LineType.STROKE)
 
         # the passes tile the band evenly, but at a join sharp enough for the miterlimit
         # to bevel the spike, each pass gets clipped at a different point and they fan
@@ -282,10 +282,14 @@ def generateStroke(document: Document, settings: Settings):
         elif bands:
             try:
                 residue = _difference(bands, [_coverageBand(drawn, spacing / 2)])
+                # the band edge is the true stroke edge, so hold the residue's ink
+                # inside it the same way the fill holds its ring-0 residue inside the
+                # region boundary
+                keepIn = _offsetPolys(bands, -settings.penWidth / 2)
             except pyclipper.ClipperException as e:
                 print(f"Warning: pyclipper stroke residue detection failed for object {obj.id!r} ({e}); skipping its gap fill.")
-                residue = []
-            _drawResidue(obj.geometry, residue, spacing, tolerance, str(obj.id))
+                residue, keepIn = [], []
+            _drawResidue(obj.geometry, residue, spacing, tolerance, str(obj.id), keepIn)
 
 # removes RAW_GEOMETRY paths from every object's geometry (they've served their
 # purpose as a stroke/fill source and would otherwise confuse the router - a path

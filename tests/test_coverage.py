@@ -272,6 +272,15 @@ def _measure(svgPath, settings):
         target = _union(fillRegion, _strokeBandOf(raw, obj.style, tolerance))
         if not target:
             continue
+        # gap fill is clipped to stay penWidth/2 inside the outer boundary, so a tip or
+        # sliver too narrow to hold a centerline that far in is deliberately left bare
+        # rather than inked over the edge. Opening target by penWidth/2 drops exactly
+        # those, and is a no-op wherever the shape is wider than the pen. Guarded on the
+        # object having an inkable core at all: a hairline stroke is narrower than the
+        # pen everywhere but is still drawn (as its centerline pass), so it stays measured.
+        core = _offsetPolys(target, -settings.penWidth / 2)
+        if core:
+            target = _offsetPolys(core, settings.penWidth / 2)
         drawn = []
         for p in obj.geometry:
             if p.lineType in DRAWN_ROLES:
@@ -306,6 +315,60 @@ def testNothingLeftUninked(svgPath, settings):
     assert not failures, (
         f"{len(failures)} of {len(results)} objects left ink gaps wider than the "
         f"known-issues budget in {os.path.basename(svgPath)}:\n{detail}"
+    )
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("svgPath", COVERAGE_SVGS, ids=os.path.basename)
+def testGapInfillInksNothingOutsideTheShape(svgPath, settings):
+    """No gap-fill ink lands outside the fill/stroke it belongs to.
+
+    Gap fill is drawn as centerlines, so this is the stricter statement that every
+    one of them sits at least penWidth/2 inside the outer boundary - a centerline
+    merely being inside the shape would still put half a pen width on bare paper.
+    """
+    if not os.path.isfile(svgPath):
+        pytest.skip(f"{os.path.basename(svgPath)} not present")
+
+    document = parseSvg(loadSvg(svgPath), settings, 1, 1)
+    tolerance = settings.tessellationTolerance
+    rawByObj = {
+        id(obj): [copy.deepcopy(p) for p in obj.geometry if p.lineType == LineType.RAW_GEOMETRY]
+        for obj in document.objects
+    }
+    generateStroke(document, settings)
+    generateInfill(document, settings)
+
+    offenders = []
+    for obj in document.objects:
+        raw = rawByObj[id(obj)]
+        gapFill = [p for p in obj.geometry if p.lineType == LineType.GAP_INFILL]
+        if not raw or not gapFill:
+            continue
+        perimeter = _union(_fillRegionOf(raw, obj.style, tolerance),
+                           _strokeBandOf(raw, obj.style, tolerance))
+        if not perimeter:
+            continue
+        # gap fill is open polylines, so they have to be swept as OPEN lines -
+        # _coverageBand's ET_CLOSEDLINE would invent ink along a closing edge that is
+        # never drawn. Round caps/joins: that is the ink a round pen tip actually lays.
+        pco = pyclipper.PyclipperOffset()
+        for p in gapFill:
+            pts = _toClipperPath(p.tessellate(tolerance, allowArcs=False).vertices())
+            if len(pts) >= 2:
+                pco.AddPath(pts, pyclipper.JT_ROUND, pyclipper.ET_OPENROUND)
+        ink = pco.Execute(settings.penWidth / 2 * _SCALE)
+        # opened at tolerance, same as _uncoveredArea: a boolean on tessellated geometry
+        # always leaves hairline slivers along the shared boundary
+        outside = _difference(ink, [perimeter])
+        outside = _offsetPolys(outside, -tolerance) if outside else []
+        if outside:
+            offenders.append((str(obj.id), _area(_offsetPolys(outside, tolerance))))
+
+    detail = "\n".join(f"  {name}: {area:.4f} mm^2 of ink outside" for name, area in offenders[:15])
+    assert not offenders, (
+        f"{len(offenders)} object(s) put gap-fill ink outside their own outline in "
+        f"{os.path.basename(svgPath)}:\n{detail}"
     )
 
 

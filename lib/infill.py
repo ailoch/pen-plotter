@@ -94,6 +94,15 @@ def _difference(subject: list, clips: list) -> list:
             pc.AddPaths(clip, pyclipper.PT_CLIP, True)
     return pc.Execute(pyclipper.CT_DIFFERENCE, pyclipper.PFT_NONZERO, pyclipper.PFT_NONZERO)
 
+# polygon region boolean: subject clipped to clip, nonzero fill. all args in clipper-int
+# space.
+def _intersect(subject: list, clip: list) -> list:
+    assert pyclipper is not None
+    pc = pyclipper.Pyclipper()
+    pc.AddPaths(subject, pyclipper.PT_SUBJECT, True)
+    pc.AddPaths(clip, pyclipper.PT_CLIP, True)
+    return pc.Execute(pyclipper.CT_INTERSECTION, pyclipper.PFT_NONZERO, pyclipper.PFT_NONZERO)
+
 # generates a family of concentric inward-offset loops from polygons (clipper-int
 # space), returning them in clipper-int space. offsets are taken repeatedly from the
 # ORIGINAL polygons (not chained from the previous loop) so discretization drift can't
@@ -379,10 +388,24 @@ def _fillGap(outer: list, holes: list, spacing: float, tolerance: float, objId: 
 # set of centerline strokes (the common case: piece <= spacing wide, so its skeleton
 # inks it - cheap open lines) or, if the piece is wider than spacing anywhere, a set of
 # concentric fallback loops. everything is tagged GAP_INFILL.
-def _drawResidue(geometry: list[Path], residue: list, spacing: float, tolerance: float, objId: str):
+def _drawResidue(geometry: list[Path], residue: list, spacing: float, tolerance: float, objId: str, keepIn: list | None = None):
     assert pyclipper is not None
     if not residue:
         return
+
+    # gap fill is drawn as centerlines, so its ink reaches penWidth/2 to either side of
+    # whatever is drawn. keepIn is the region already pulled that far in from the
+    # outermost fill/stroke boundary; clipping to it keeps that ink off the bare paper
+    # outside the shape. The cost is that a feature narrower than the pen is left
+    # uninked rather than inked with overspill.
+    if keepIn is not None:
+        try:
+            residue = _intersect(residue, keepIn) if keepIn else []
+        except pyclipper.ClipperException as e:
+            print(f"Warning: pyclipper failed to clip gap fill to object {objId!r}'s outline ({e}); skipping it.")
+            return
+        if not residue:
+            return
 
     # morphological opening (erode by eps then dilate back) drops the hairline numeric
     # slivers that ride an annulus/coverage boundary, without eroding a real gap
@@ -432,7 +455,7 @@ def _drawResidue(geometry: list[Path], residue: list, spacing: float, tolerance:
 # centerline strokes. successive annuli abut exactly (annulusInner_k == annulusOuter_k+1),
 # so the region is tiled with no seams and no double bookkeeping. drawResidue is skipped
 # when generateGapInfill is off (rings still tile).
-def _fillRegion(geometry: list[Path], region: list, spacing: float, firstDelta: float, tolerance: float, joinType, generateGapInfill: bool, objId: str, lineType: LineType = LineType.INFILL):
+def _fillRegion(geometry: list[Path], region: list, spacing: float, firstDelta: float, tolerance: float, joinType, generateGapInfill: bool, objId: str, penWidth: float, lineType: LineType = LineType.INFILL):
     assert pyclipper is not None
     s = spacing
     pco = pyclipper.PyclipperOffset()
@@ -458,6 +481,10 @@ def _fillRegion(geometry: list[Path], region: list, spacing: float, firstDelta: 
                 break # interior exhausted
             ring = inset(center)
             annulusInner = inset(innerInset) if generateGapInfill else []
+            # only ring 0's annulus can reach the region boundary (every later one starts
+            # at least s/2 further in than penWidth/2), so that's the only residue whose
+            # ink needs holding back from it
+            keepIn = inset(penWidth / 2) if generateGapInfill and k == 0 else None
         except pyclipper.ClipperException as e:
             print(f"Warning: pyclipper offset failed for object {objId!r} at ring {k} ({e}); stopping infill for it.")
             break
@@ -475,7 +502,7 @@ def _fillRegion(geometry: list[Path], region: list, spacing: float, firstDelta: 
             except pyclipper.ClipperException as e:
                 print(f"Warning: pyclipper residue detection failed for object {objId!r} at ring {k} ({e}); skipping its gap fill.")
                 residue = []
-            _drawResidue(geometry, residue, s, tolerance, objId)
+            _drawResidue(geometry, residue, s, tolerance, objId, keepIn)
 
         k += 1
 
@@ -554,4 +581,4 @@ def generateInfill(document: Document, settings: Settings):
         firstDelta = (obj.style.strokeWidth / 2 + settings.penWidth / 2) if hasStroke else settings.penWidth / 2
         joinType = _joinType(obj.style.linejoin) if hasStroke else pyclipper.JT_ROUND
 
-        _fillRegion(obj.geometry, region, spacing, firstDelta, tolerance, joinType, settings.generateGapInfill, str(obj.id))
+        _fillRegion(obj.geometry, region, spacing, firstDelta, tolerance, joinType, settings.generateGapInfill, str(obj.id), settings.penWidth)
