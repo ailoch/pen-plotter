@@ -1,7 +1,7 @@
 import copy, math
 from lib.geometry import Document, Path, Segment
 from lib.settings import LineType, Settings
-from lib.infill import _SCALE, _appendLoop, _coverageBand, _difference, _drawArcTolerance, _drawResidue, _fillRegion, _joinType, _offsetPolys, _resolveFillRegion, _toClipperPath
+from lib.infill import _SCALE, _appendLine, _appendLoop, _coverageBand, _difference, _drawArcTolerance, _drawResidue, _fillRegion, _fromClipperPath, _joinType, _offsetPolys, _resolveFillRegion, _toClipperPath
 
 try:
     import pyclipper
@@ -33,6 +33,83 @@ def _passDeltas(numPasses: int, s: float) -> list[float]:
     if numPasses % 2 == 1:
         return [k * s for k in range(1, (numPasses - 1) // 2 + 1)]
     return [(k - 0.5) * s for k in range(1, numPasses // 2 + 1)]
+
+# caps that already extend past the end point, so their passes land on their own planes
+# and need no setback; anything else (including an unrecognized value) is a butt cap
+_EXTENDING_CAPS = ("round", "square")
+
+# the plane each butt cap of an open subpath sits on, as (endPoint, outwardUnitTangent).
+# The tangent comes from the flattened polyline's own end chord, which is what pyclipper
+# builds the cap itself from, so plane and cap stay parallel. Empty if the path is too
+# degenerate to have a direction.
+def _buttEndPlanes(vertices: list[complex]) -> list[tuple[complex, complex]]:
+    planes = []
+    for endIndex, step in ((len(vertices) - 1, -1), (0, 1)):
+        end = vertices[endIndex]
+        i = endIndex + step
+        while 0 <= i < len(vertices) and abs(vertices[i] - end) < 1e-12:
+            i += step
+        if not 0 <= i < len(vertices):
+            return []
+        planes.append((end, (end - vertices[i]) / abs(end - vertices[i])))
+    return planes
+
+# how far a cap cutter has to reach to cover everything outward of an end plane
+def _clipReach(vertices: list[complex], strokeWidth: float) -> float:
+    xs = [v.real for v in vertices]
+    ys = [v.imag for v in vertices]
+    return (max(xs) - min(xs)) + (max(ys) - min(ys)) + strokeWidth + 1
+
+# what a pass set back by `setback` must avoid: everything past a butt end plane, except
+# what the band still covers to that depth.
+#
+# The plane term is why this isn't a centerline trim by arc length - eroding a shape by d
+# moves a straight boundary inward by exactly d no matter what the geometry behind it does,
+# so the cap lands right even where the path curves into its end. The band term keeps the
+# cut honest: a stroke that doubles back (a hairpin dash, whose two caps can sit closer
+# together than the stroke is wide) genuinely continues past one arm's end plane, and there
+# the band is thick enough to survive the erosion and protect itself.
+def _capCutter(band: list, planes: list[tuple[complex, complex]], setback: float, reach: float, tolerance: float) -> list:
+    assert pyclipper is not None
+    beyond = []
+    for origin, tangent in planes:
+        base = origin - tangent * setback
+        side = tangent * 1j * reach
+        beyond.append(_toClipperPath([base + side, base - side,
+                                      base - side + tangent * reach, base + side + tangent * reach]))
+    keep = _offsetPolys(band, -max(setback - tolerance, 0.0)) if band else []
+    return _difference(beyond, [keep])
+
+# removes `cutter` from each of `paths`, in clipper-int space. `closed` picks whether they
+# are cut as regions (a pass's offset contour) or as open polylines (the center pass).
+def _setBack(paths: list, cutter: list, closed: bool) -> list:
+    assert pyclipper is not None
+    if not cutter:
+        return paths
+    cutX = [x for path in cutter for x, _ in path]
+    cutY = [y for path in cutter for _, y in path]
+
+    kept = []
+    for path in paths:
+        # every contour is cut on its own. Handing the whole set to one boolean would
+        # union them instead, and a stroke that doubles back offsets into overlapping
+        # loops - merging those drops the shared centerlines each one was inking.
+        xs = [x for x, _ in path]
+        ys = [y for _, y in path]
+        if (max(xs) < min(cutX) or min(xs) > max(cutX)
+                or max(ys) < min(cutY) or min(ys) > max(cutY)):
+            kept.append(path) # out of the cutter's reach, so leave it exactly as it is
+            continue
+        pc = pyclipper.Pyclipper()
+        pc.AddPath(path, pyclipper.PT_SUBJECT, closed)
+        pc.AddPaths(cutter, pyclipper.PT_CLIP, True)
+        if closed:
+            kept.extend(pc.Execute(pyclipper.CT_DIFFERENCE, pyclipper.PFT_NONZERO, pyclipper.PFT_NONZERO))
+        else:
+            # an open subject can only come back through a PolyTree
+            tree = pc.Execute2(pyclipper.CT_DIFFERENCE, pyclipper.PFT_NONZERO, pyclipper.PFT_NONZERO)
+            kept.extend(pyclipper.OpenPathsFromPolyTree(tree))
+    return kept
 
 # a dash shorter than this (mm) is numeric noise from a boundary landing exactly on a
 # pattern tick, not something to draw
@@ -205,25 +282,34 @@ def generateStroke(document: Document, settings: Settings):
         bands: list = []
 
         for p in rawSubpaths:
-            # a one-sided dash draws no passes of its own - the band is tiled after the
-            # loop instead, so neither the center pass nor the per-delta rings apply
-            if centerPassNeeded and not oneSided:
-                centerPass = copy.deepcopy(p)
-                centerPass.lineType = LineType.STROKE
-                obj.geometry.append(centerPass)
-
-            if not deltas and not needBands:
-                continue # hairline stroke with nothing to check - the center pass is all of it
-
             # closed paths omit the duplicate end point, open ones include it - both
             # match pyclipper's expectation for AddPath
             closed = p.isClosed()
             vertices = p.tessellate(tolerance, allowArcs=False).vertices()
             clipperPath = _toClipperPath(vertices)
+
+            # A butt cap lands every pass's turnaround on the stroke's own end plane, so
+            # the passes all re-ink that one line and their +/- s/2 of ink overruns the
+            # end. Each pass's cap belongs at its own depth into the band instead
+            # (strokeWidth/2 - delta), which is where eroding the band would put it.
+            endPlanes: list[tuple[complex, complex]] = []
+            if deltas and not oneSided and not closed and len(clipperPath) >= 2 and style.linecap not in _EXTENDING_CAPS:
+                endPlanes = _buttEndPlanes(vertices)
+
+            centerPass = None
+            if centerPassNeeded and not oneSided:
+                centerPass = copy.deepcopy(p) # exact geometry - arcs and beziers survive
+                centerPass.lineType = LineType.STROKE
+            if centerPass is not None and not endPlanes:
+                obj.geometry.append(centerPass)
+                if len(clipperPath) >= 2:
+                    drawn.append(clipperPath)
+
+            if not deltas and not needBands:
+                continue # hairline stroke with nothing to check - the center pass is all of it
+
             if len(clipperPath) < 2:
                 continue
-            if centerPassNeeded and not oneSided:
-                drawn.append(clipperPath) # the flattened form of the center pass just appended
 
             # closed -> ET_CLOSEDLINE; open -> pyclipper's open-line end type per style.linecap
             endType = pyclipper.ET_CLOSEDLINE if closed else {"round": pyclipper.ET_OPENROUND, "square": pyclipper.ET_OPENSQUARE}.get(style.linecap, pyclipper.ET_OPENBUTT) # default / "butt"
@@ -235,6 +321,24 @@ def generateStroke(document: Document, settings: Settings):
             pco.MiterLimit = style.miterlimit
             pco.AddPath(clipperPath, joinType, endType)
 
+            # the stroke band itself: the shape SVG would have painted solid, offset with
+            # the same join/cap/miterlimit the passes used so its edges line up with theirs
+            band: list = []
+            if needBands or endPlanes:
+                try:
+                    band = pco.Execute(style.strokeWidth / 2 * _SCALE)
+                except pyclipper.ClipperException as e:
+                    print(f"Warning: pyclipper stroke band offset failed for object {obj.id!r} ({e}); skipping its gap fill.")
+            if needBands:
+                bands.extend(band)
+            reach = _clipReach(vertices, style.strokeWidth) if endPlanes else 0.0
+
+            # the center pass sits at delta 0, so it sets back by the full strokeWidth/2
+            if centerPass is not None and endPlanes:
+                for piece in _setBack([clipperPath], _capCutter(band, endPlanes, style.strokeWidth / 2, reach, tolerance), False):
+                    _appendLine(obj.geometry, _fromClipperPath(piece), LineType.STROKE, tolerance)
+                    drawn.append(piece)
+
             for delta in (() if oneSided else deltas):
                 try:
                     # positive delta grows outward from the centerline - a closed
@@ -245,17 +349,11 @@ def generateStroke(document: Document, settings: Settings):
                 except pyclipper.ClipperException as e:
                     print(f"Warning: pyclipper stroke offset failed for object {obj.id!r} at delta {delta:g}mm ({e}); skipping this pass.")
                     continue
+                if endPlanes and result:
+                    result = _setBack(result, _capCutter(band, endPlanes, style.strokeWidth / 2 - delta, reach, tolerance), True)
                 for contour in result:
                     _appendLoop(obj.geometry, contour, LineType.STROKE, tolerance)
                 drawn.extend(result)
-
-            # the stroke band itself: the shape SVG would have painted solid, offset with
-            # the same join/cap/miterlimit the passes used so its edges line up with theirs
-            if needBands:
-                try:
-                    bands.extend(pco.Execute(style.strokeWidth / 2 * _SCALE))
-                except pyclipper.ClipperException as e:
-                    print(f"Warning: pyclipper stroke band offset failed for object {obj.id!r} ({e}); skipping its gap fill.")
 
         # one-sided: tile the outward half of the dash band (band minus the fill's
         # territory) with the same concentric-rings-plus-residue routine the fill uses,

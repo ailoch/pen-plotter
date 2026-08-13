@@ -19,7 +19,7 @@ pyclipper = pytest.importorskip("pyclipper", reason="stroke generation needs pyc
 from lib.geometry import Arc, Document, Path, PathObject, Style, Transform
 from lib.infill import _SCALE, _toClipperPath, generateInfill
 from lib.settings import LineType
-from lib.stroke import _applyDash, _passCount, _passDeltas, generateStroke
+from lib.stroke import _applyDash, _buttEndPlanes, _passCount, _passDeltas, generateStroke
 
 #region helpers
 
@@ -183,6 +183,90 @@ def testWiderStrokeCoversMoreArea(settings):
             f"width {width}: {area:.3f} mm^2 is not about {length * width:.3f}"
         )
     assert areas == sorted(areas), f"area did not grow with width: {areas}"
+
+
+#endregion
+
+#region butt cap setback
+
+
+def _trueFootprint(points, closed, strokeWidth):
+    """The exact region SVG would paint: the raw centerline offset by strokeWidth/2,
+    butt-capped (no extension past the endpoints) since that's the only cap these
+    tests exercise."""
+    endType = pyclipper.ET_CLOSEDLINE if closed else pyclipper.ET_OPENBUTT
+    pco = pyclipper.PyclipperOffset()
+    pco.AddPath(_toClipperPath(points), pyclipper.JT_MITER, endType)
+    return pco.Execute(strokeWidth / 2 * _SCALE)
+
+
+def _inkOutsideFootprint(obj, points, closed, strokeWidth, settings) -> float:
+    """mm^2 of STROKE ink lying outside the true footprint, inflated by fillSpacing/2 -
+    a centerline sitting exactly on the true edge still sweeps that far past it, which
+    is expected overcoverage rather than a cap landing in the wrong place."""
+    from lib.infill import _difference, _offsetPolys
+    footprint = _trueFootprint(points, closed, strokeWidth)
+    allowed = _offsetPolys(footprint, settings.fillSpacing / 2)
+    ink = _inkPolys(obj, settings, roles=(LineType.STROKE,))
+    outside = _difference(ink, [allowed]) if ink else []
+    # opened at tolerance: a boolean on tessellated geometry always leaves hairline
+    # seams along a shared boundary
+    outside = _offsetPolys(outside, -settings.tessellationTolerance) if outside else []
+    return _area(outside)
+
+
+def testDegenerateSegmentShorterThanItsOwnWidthDoesNotOverink(settings):
+    """A stroke whose width exceeds its own length forces every pass's two end-plane
+    setbacks to overlap - the innermost passes end up entirely erased. generateStroke
+    must survive that without crashing, and whatever passes DO survive must still
+    respect the true (butt-capped) footprint rather than spilling past it.
+    """
+    points = [0 + 0j, 1 + 0j]  # 1mm long
+    obj = _stroked(_object(points, False, settings, strokeWidth=2.0), settings)  # 2mm wide
+
+    assert any(p.lineType == LineType.STROKE for p in obj.geometry), "nothing drawn at all"
+    outside = _inkOutsideFootprint(obj, points, False, 2.0, settings)
+    assert outside == pytest.approx(0.0, abs=1e-4), f"{outside:.5f} mm^2 of ink outside the true footprint"
+
+
+def testSharpTurnWithShortTailPicksTheTailsOwnDirection(settings):
+    """The cap plane at a path's end must be perpendicular to whichever segment
+    actually meets that end - even when it's a short tail turning sharply off a much
+    longer run - not to the run's own direction. _buttEndPlanes walks inward only far
+    enough to find a non-coincident vertex, so a short tail's direction wins here.
+    """
+    # an 11mm vertical run, then a short 0.583mm tail turning off at a sharp angle
+    vertices = [0 + 0j, 0 + 11j, 0.5 + 11.3j]
+    tailDirection = (vertices[2] - vertices[1]) / abs(vertices[2] - vertices[1])
+
+    planes = _buttEndPlanes(vertices)
+    assert len(planes) == 2
+    farEnd, farTangent = planes[0]  # index len-1: the tail's own end
+    assert farEnd == vertices[2]
+    assert farTangent == pytest.approx(tailDirection)
+    # the tail's direction is nowhere near the main run's (0+1j) - if this ever came
+    # back close to that, the plane silently fell back to the wrong segment
+    assert abs(farTangent - 1j) > 0.5
+
+
+def testSharpTurnWithShortTailDoesNotCrashOrOverink(settings):
+    """Pipeline-level companion to the direct _buttEndPlanes check above: the short
+    tail must still get inked (not erased outright by a plane computed against the
+    wrong direction) and, as with the degenerate-length case, the ink that IS drawn
+    must stay within the true footprint.
+    """
+    points = [0 + 0j, 0 + 11j, 0.5 + 11.3j]
+    obj = _stroked(_object(points, False, settings, strokeWidth=2.0), settings)
+
+    outside = _inkOutsideFootprint(obj, points, False, 2.0, settings)
+    assert outside == pytest.approx(0.0, abs=1e-4), f"{outside:.5f} mm^2 of ink outside the true footprint"
+
+    # ink actually reaches near the tail tip - if the cap plane had used the main
+    # run's direction instead, it would have sheared the tail off entirely
+    tip = points[-1]
+    nearTip = [_toClipperPath([tip + 1 + 1j, tip + 1 - 1j, tip - 1 - 1j, tip - 1 + 1j])]
+    ink = _inkPolys(obj, settings, roles=(LineType.STROKE,))
+    assert _area(_intersect(ink, nearTip)) > 0.1, "no ink survived near the short tail's tip"
 
 
 #endregion

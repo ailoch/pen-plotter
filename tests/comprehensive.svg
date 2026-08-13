@@ -445,25 +445,35 @@
     </g>
     <g
        id="stroke-caps-and-markers"
-       transform="translate(0,40)">
+       transform="translate(0,29)">
+      <path
+         id="stroke-cap-butt-shorter-than-width"
+         d="M140,7.5 V8.5"
+         stroke-width="2"
+         stroke-linecap="butt" />
+      <path
+         id="stroke-cap-butt-sharp-turn-short-tail"
+         d="M148,2 V13 L148.5,14"
+         stroke-width="2"
+         stroke-linecap="butt" />
       <path
          id="stroke-cap-butt"
-         d="M160,2 L160,14"
+         d="M 160,2 V 14"
          stroke-width="2"
          stroke-linecap="butt" />
       <path
          id="stroke-cap-round"
-         d="M166,2 L166,14"
+         d="M 166,2 V 14"
          stroke-width="2"
          stroke-linecap="round" />
       <path
          id="stroke-cap-square"
-         d="M172,2 L172,14"
+         d="M 172,2 V 14"
          stroke-width="2"
          stroke-linecap="square" />
       <path
          id="stroke-markers-start-mid-end"
-         d="M182,14 L190,2 L198,14 L206,2"
+         d="m 182,14 8,-12 8,12 8,-12"
          marker-start="url(#mk)"
          marker-mid="url(#mk)"
          marker-end="url(#mk)" />
