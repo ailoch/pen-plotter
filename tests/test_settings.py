@@ -14,11 +14,11 @@ dict it came from.
 """
 import json
 import os
-from dataclasses import asdict
+from dataclasses import asdict, fields
 
 import pytest
 
-from lib.settings import LineType, Settings
+from lib.settings import _MACHINE_FIELDS, _SLICER_FIELDS, LineType, Settings
 
 CONFIGS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "configs")
 DRAW_ROLES = (LineType.STROKE, LineType.INFILL, LineType.GAP_INFILL, LineType.INVALID)
@@ -27,18 +27,22 @@ DRAW_ROLES = (LineType.STROKE, LineType.INFILL, LineType.GAP_INFILL, LineType.IN
 #region helpers
 
 
-def _load(tmp_path, data: dict) -> Settings:
-    """Write `data` as a config file and load it."""
+def _loader(s: Settings, side: str):
+    return s.initFromMachineJson if side == "machine" else s.initFromSlicerJson
+
+
+def _load(tmp_path, data: dict, side: str = "machine") -> Settings:
+    """Write `data` as a config file and load it with the given side's loader."""
     path = tmp_path / "config.json"
     path.write_text(json.dumps(data), encoding="utf-8")
     s = Settings()
-    s.initFromJson(str(path))
+    _loader(s, side)(str(path))
     return s
 
 
-def _loadFixture(name: str) -> Settings:
+def _loadFixture(name: str, side: str = "machine") -> Settings:
     s = Settings()
-    s.initFromJson(os.path.join(CONFIGS_DIR, name))
+    _loader(s, side)(os.path.join(CONFIGS_DIR, name))
     return s
 
 
@@ -50,8 +54,8 @@ def _assertDefaultSettings(s: Settings):
 def _warnings(capsys) -> list[str]:
     """Every printed line that reports a problem, ignoring the success banner.
 
-    Every one of initFromJson's problem messages starts with "Warning:", so this
-    is the one thing that filter needs to check."""
+    Every one of initFromMachineJson/initFromSlicerJson's problem messages starts
+    with "Warning:", so this is the one thing that filter needs to check."""
     out = capsys.readouterr().out
     return [ln for ln in out.splitlines() if ln.startswith("Warning:")]
 
@@ -64,7 +68,7 @@ def _warnings(capsys) -> list[str]:
 def testMissingFileFallsBackToDefaults(tmp_path, capsys):
     """A missing config is reported and leaves every field at its default."""
     s = Settings()
-    s.initFromJson(str(tmp_path / "nope.json"))
+    s.initFromMachineJson(str(tmp_path / "nope.json"))
     _assertDefaultSettings(s)
     assert "does not exist" in capsys.readouterr().out
 
@@ -76,7 +80,7 @@ def testMalformedJsonFallsBackToDefaults(capsys):
 
     out = capsys.readouterr().out
     assert "failed to parse" in out
-    # the whole point of the ValueError re-parse in initFromJson is that the
+    # the whole point of the ValueError re-parse in _initFromJson is that the
     # message is one readable line, not a dump of the entire source text
     assert len(out.splitlines()) <= 2, f"parse error should be one line, got:\n{out}"
 
@@ -97,7 +101,7 @@ def testNonObjectSectionsRejected(tmp_path, data, capsys):
     path = tmp_path / "config.json"
     path.write_text(json.dumps(data), encoding="utf-8")
     s = Settings()
-    s.initFromJson(str(path))
+    s.initFromMachineJson(str(path))
     _assertDefaultSettings(s)
     assert "must be a JSON object" in capsys.readouterr().out
 
@@ -117,9 +121,11 @@ def testDefaultSettingsAreValid(capsys):
 
 
 def testShippedConfigLoadsCleanly(capsys):
-    """The real P1S config produces no warnings, unknown keys or type errors."""
+    """The real P1S machine config and Bambu Studio slicer config both produce no
+    warnings, unknown keys, or type errors."""
     s = Settings()
-    s.initFromJson("config/bambu_p1s_config.json")
+    s.initFromMachineJson("config/machines/bambu_p1s.json")
+    s.initFromSlicerJson("config/slicers/bambu_studio.json")
     assert _warnings(capsys) == []
 
 
@@ -211,19 +217,24 @@ def testPenAtLeastAsWideAsFillSpacingIsSilent(tmp_path, processing, capsys):
 #region bad values
 
 
-def testWrongTypesAreAllRejected(capsys):
-    """tests/configs/wrong-types.json - every entry has a valid name and an
-    invalid type, so nothing in it may be applied."""
-    s = _loadFixture("wrong-types.json")
+@pytest.mark.parametrize("fixture, side, names", [
+    ("wrong-types-machine.json", "machine",
+     ("fillSpacing", "generateGapInfill", "machinePrefixFile", "unknownSetting",
+      "heights", "speeds", "eAxisMultiplier", "startPos", "penOffset",
+      "canvasSize", "canvasAlignment", "safeZoneAlignment", "style")),
+    ("wrong-types-slicer.json", "slicer",
+     ("instructionTypes", "segmentTypes")),
+], ids=["machine", "slicer"])
+def testWrongTypesAreAllRejected(fixture, side, names, capsys):
+    """tests/configs/wrong-types-{machine,slicer}.json - every entry has a valid
+    name and an invalid type, so nothing in it may be applied."""
+    s = _loadFixture(fixture, side)
     _assertDefaultSettings(s)
 
     # and each one has to be *reported* - silently ignoring a setting the user
     # wrote is the failure mode this whole module is trying to avoid
     warned = _warnings(capsys)
-    for name in ("fillSpacing", "generateGapInfill", "prefixFile", "unknownSetting",
-                 "heights", "speeds", "eAxisMultiplier", "startPos", "penOffset",
-                 "canvasSize", "canvasAlignment", "safeZoneAlignment", "style",
-                 "instructionTypes", "segmentTypes"):
+    for name in names:
         assert any(name in w for w in warned), f"{name} was skipped without a message"
 
 
@@ -246,7 +257,7 @@ def testWarningsNameTheOffendingSettingsFile(tmp_path, capsys):
     came from - the only way to tell two configs' warnings apart in a combined log."""
     path = tmp_path / "config.json"
     path.write_text('{"processing": {"filSpacing": 1.0}}', encoding="utf-8")
-    Settings().initFromJson(str(path))
+    Settings().initFromMachineJson(str(path))
     warned = _warnings(capsys)
     assert warned and all(str(path) in w for w in warned)
 
@@ -315,17 +326,21 @@ def testPositionsBecomeComplex(tmp_path):
 def testDrawKeyExpandsAndIsOverridable(tmp_path, name, drawValue, override, expected, drawFirst):
     """"draw" sets all four draw roles at once; a named role wins over it.
 
-    Ordering must not matter - initFromJson seeds from "draw" first and then
+    Ordering must not matter - _initFromJson seeds from "draw" first and then
     applies explicit keys regardless of where "draw" sits in the dict. Both
     orderings are built and serialized here so the JSON text itself differs,
     not just the source dict (dict insertion order survives json.dumps, so a
     test that only ever wrote {"draw": ..., **override} would never produce
     JSON with "draw" written second - it would look like it tests ordering
     without actually doing so)."""
-    section = "visualization" if name == "lineTypes" else "motion"
+    # lineTypes is the one of these four that lives on the slicer side - the
+    # other three (heights/accels/shortTravelThresholds) are machine fields
+    isLineTypes = name == "lineTypes"
+    section = "visualization" if isLineTypes else "motion"
+    side = "slicer" if isLineTypes else "machine"
     drawEntry = {"draw": drawValue}
     combined = {**drawEntry, **override} if drawFirst else {**override, **drawEntry}
-    s = _load(tmp_path, {section: {name: combined}})
+    s = _load(tmp_path, {section: {name: combined}}, side)
     got = getattr(s, name)
 
     assert set(got) == set(DRAW_ROLES), f"{name} should cover exactly the draw roles"
@@ -371,7 +386,7 @@ def testDrawKeyDoesNotLeakIntoTravel(tmp_path):
 ])
 def testCanvasAlignmentResolvesToLowerLeftOffset(tmp_path, alignment, expected, capsys):
     """Downstream code only ever sees a lower-left offset, so the alignment has
-    to be fully resolved by the time initFromJson returns."""
+    to be fully resolved by the time initFromMachineJson returns."""
     s = _load(tmp_path, {"machine": {
         "plateSize": [200, 200], "safeZoneSize": [200, 200],
         "canvasSize": [50, 40], "canvasOffset": [10, 5], "canvasAlignment": alignment,
@@ -398,6 +413,44 @@ def testSafeZoneAlignmentResolvesIndependently(tmp_path):
     }})
     assert s.safeZoneOffset == 90 + 90j  # 200 - 10 - 100
     assert s.canvasOffset == 20 + 20j
+
+
+#endregion
+
+#region machine/slicer split
+
+
+def testMachineAndSlicerFieldsPartitionSettings():
+    """Every Settings field must load from exactly one of the two config files -
+    a field in neither would be silently unloadable from either one."""
+    allFields = {f.name for f in fields(Settings())}
+    assert _MACHINE_FIELDS & _SLICER_FIELDS == set(), "a field claimed by both sides"
+    assert _MACHINE_FIELDS | _SLICER_FIELDS == allFields, "a field claimed by neither side"
+
+
+def testSlicerFieldInMachineFileIsRejectedWithLocationHint(tmp_path, capsys):
+    """A field that exists on Settings, but on the other side, is a more specific
+    mistake than a typo - the warning should say which file it belongs in."""
+    s = _load(tmp_path, {"visualization": {"layerChangeMessage": "; NOPE"}}, "machine")
+    assert s.layerChangeMessage == "", "a misplaced setting must not be applied"
+    warned = _warnings(capsys)
+    assert any("layerChangeMessage" in w and "slicer" in w for w in warned)
+
+
+def testMachineFieldInSlicerFileIsRejectedWithLocationHint(tmp_path, capsys):
+    s = _load(tmp_path, {"processing": {"fillSpacing": 1.0}}, "slicer")
+    assert s.fillSpacing == 0.3, "a misplaced setting must not be applied"
+    warned = _warnings(capsys)
+    assert any("fillSpacing" in w and "machine" in w for w in warned)
+
+
+def testGenuineTypoIsStillReportedAsUnknown(tmp_path, capsys):
+    """A name that isn't a Settings field at all (not just on the wrong side)
+    keeps the plain "unknown setting" wording, with no file suggested."""
+    s = _load(tmp_path, {"processing": {"filSpacing": 1.0}}, "machine")
+    warned = _warnings(capsys)
+    assert any("unknown setting" in w and "filSpacing" in w for w in warned)
+    assert not any("belongs in" in w for w in warned)
 
 
 #endregion

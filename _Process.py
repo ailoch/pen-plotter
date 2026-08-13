@@ -9,7 +9,8 @@ from lib.route import orderPaths
 from lib.plot import createFile
 
 settings = Settings()
-settings.initFromJson("config/bambu_p1s_config.json")
+settings.initFromSlicerJson("config/slicers/bambu_studio.json")
+settings.initFromMachineJson("config/machines/bambu_p1s.json")
 
 def promptInputFile(previous: str | None = None) -> str:
     while True:

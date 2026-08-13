@@ -89,7 +89,8 @@ def testPipelineRuns(svgPath, settings, tmp_path):
     # lines. So the bar has to be the templates' own size, not a fixed number,
     # or an empty drawing sails past it.
     templateLines = 0
-    for path in (settings.prefixFile, settings.suffixFile):
+    for path in (settings.slicerPrefixFile, settings.slicerSuffixFile,
+                 settings.machinePrefixFile, settings.machineSuffixFile):
         with open(path, encoding="utf-8") as f:
             templateLines += sum(1 for _ in f)
     assert len(lines) > templateLines, (

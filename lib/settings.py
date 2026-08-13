@@ -1,6 +1,6 @@
 from typing import Any, cast
 from enum import Enum, auto
-from dataclasses import dataclass, field, fields
+from dataclasses import dataclass, field
 import commentjson
 
 class LineType(Enum):
@@ -43,6 +43,34 @@ _LINE_TYPE_KEYS = {
     "_documentBounds": LineType._DOCUMENT_BOUNDS,
 }
 
+# which Settings fields load from the machine config vs. the slicer config -
+# every field on the dataclass must appear in exactly one of these (checked by
+# testMachineAndSlicerFieldsPartitionSettings in tests/test_settings.py), since
+# a field in neither would be silently unloadable from any file
+_MACHINE_FIELDS = frozenset({
+    "startPos", "endPos", "penOffset", "plateSize",
+    "safeZoneSize", "safeZoneOffset", "safeZoneAlignment",
+    "canvasSize", "canvasOffset", "canvasAlignment",
+    "maxVerticalSpeed", "printerModel", "maxHeight",
+    "heights", "speeds", "accels", "shortTravelThresholds",
+    "loadDelay", "showLoadProgress", "eAxisMultiplier",
+    "penWidth", "fillSpacing", "generateGapInfill", "generateStroke",
+    "tessellationTolerance", "showOutOfBounds",
+    "machinePrefixFile", "machineSuffixFile",
+    # showPenPos/objectHeightChange/style pick *how* a drawing renders, but that
+    # choice is about the file being generated, not about a slicer's syntax. the
+    # average user changing printers or preview preferences shouldn't have to go
+    # find and edit a separate slicer file for it. Only the literal per-slicer
+    # vocabulary those choices draw from stays on the slicer side
+    "showPenPos", "objectHeightChange", "style",
+    "showBoundingBoxes", "optimizePathOrder", "profiling",
+})
+_SLICER_FIELDS = frozenset({
+    "styleChangeMessage", "layerChangeMessage",
+    "lineTypes", "instructionTypes", "segmentTypes",
+    "slicerPrefixFile", "slicerSuffixFile",
+})
+
 @dataclass
 class Settings:
     # machine settings
@@ -70,6 +98,9 @@ class Settings:
     showLoadProgress: bool = True # if true, {WAIT_FOR_PEN} counts the load delay down on the printer's progress display (M73) instead of dwelling silently
     eAxisMultiplier: float = 1.0 # scales every emitted E value - reduces the raw commanded E rate the P1S planner throttles XY speed against; side effect: the slicer's total-filament stat scales down by the same factor
 
+    printerModel: str = "" # printer name written into a slicer's config header (e.g. Bambu Studio's printer_model)
+    maxHeight: float = 250.0 # mm - the printer's max Z, written into a slicer's config header (e.g. printable_height)
+
     # processing settings
     penWidth: float = .5 # expected ink width (mm)
     fillSpacing: float = .3 # max distance (mm) between adjacent passes/loops before white paper shows through; <= 0 disables fill
@@ -78,8 +109,8 @@ class Settings:
     tessellationTolerance: float = .012
     showOutOfBounds: bool = False # if true, segments outside the canvas are still drawn, tagged LineType.INVALID for slicer-preview visibility; if false, they're cropped to the canvas edge
 
-    prefixFile: str = "gcode_templates/default_prefix.gcode"
-    suffixFile: str = "gcode_templates/default_suffix.gcode"
+    machinePrefixFile: str = "gcode_templates/machines/default_prefix.gcode"
+    machineSuffixFile: str = "gcode_templates/machines/default_suffix.gcode"
 
     # visualization settings
     showPenPos: bool = True
@@ -92,6 +123,9 @@ class Settings:
     lineTypes: dict[LineType, str] = field(default_factory=dict) # used when style is "role"
     instructionTypes: tuple[str, str, str, str] = ("Outer wall", "Overhang wall", "Support interface", "Gap infill") # used when style is "instruction" - index 0 is G0/G1, 1 is G2, 2 is G3, 3 is everything else
     segmentTypes: tuple[str, ...] = field(default_factory=lambda: ("Sparse infill", "Support interface", "Overhang wall", "Internal solid infill", "Gap infill")) # used when style is "segment" - each instruction cycles to the next entry
+
+    slicerPrefixFile: str = "gcode_templates/slicers/default_prefix.gcode"
+    slicerSuffixFile: str = "gcode_templates/slicers/default_suffix.gcode"
 
     # debug settings
     showBoundingBoxes: bool = False
@@ -135,13 +169,18 @@ class Settings:
         if self.eAxisMultiplier <= 0:
             print("Warning: eAxisMultiplier <= 0 drops the E value from every draw move; the slicer will render the whole drawing as travel moves.")
 
-    def initFromJson(self, path):
+    # shared JSON-loading body for both initFromMachineJson and initFromSlicerJson.
+    # allowed is the set of Settings fields this side may load; otherAllowed is the
+    # other side's set, used only to tell "typo" from "field belongs in the other
+    # file" in the warning message. Returns whether the file was well-formed enough
+    # to reach the per-setting loop.
+    def _initFromJson(self, path: str, allowed: frozenset[str], otherAllowed: frozenset[str], otherSideName: str) -> bool:
         try:
             with open(path) as f:
                 text = f.read()
         except FileNotFoundError:
             print(f"Warning: settings file '{path}' does not exist; using default settings.")
-            return
+            return False
 
         try:
             data = commentjson.loads(text)
@@ -158,20 +197,22 @@ class Settings:
                 except Exception as parseError:
                     cause = parseError
             print(f"Warning: failed to parse settings file '{path}' ({str(cause).splitlines()[0]}); using default settings.")
-            return
+            return False
 
         if not isinstance(data, dict) or not all(isinstance(section, dict) for section in data.values()):
             print(f"Warning: settings file '{path}' must be a JSON object of objects (sections containing settings); using default settings.")
-            return
+            return False
 
-        allowed = {f.name for f in fields(self)}
         # some settings are stored with different types than in the json
         specialTypeSettings = {"startPos", "penOffset", "plateSize", "safeZoneSize", "safeZoneOffset", "canvasSize", "canvasOffset", "endPos", "instructionTypes", "segmentTypes"}
 
         for sectionName, data in data.items():
             for settingName, setting in data.items():
                 if settingName not in allowed:
-                    print(f"Warning: unknown setting '{settingName}' found while reading {sectionName} in '{path}'.")
+                    if settingName in otherAllowed:
+                        print(f"Warning: setting '{settingName}' found while reading {sectionName} in '{path}' belongs in the {otherSideName} config; ignoring it.")
+                    else:
+                        print(f"Warning: unknown setting '{settingName}' found while reading {sectionName} in '{path}'.")
                     continue
 
                 if settingName not in specialTypeSettings:
@@ -238,6 +279,13 @@ class Settings:
                     case _:
                         setattr(self, settingName, setting)
 
+        return True
+
+    # loads the machine section of settings from a per-printer JSON file
+    def initFromMachineJson(self, path: str):
+        if not self._initFromJson(path, _MACHINE_FIELDS, _SLICER_FIELDS, "slicer"):
+            return
+
         # safeZoneOffset/canvasOffset are read as "distance towards center from the
         # aligned plate corner" - convert to the lower-left-corner offset the rest of
         # the pipeline expects, now that both the offset and alignment are known
@@ -245,5 +293,12 @@ class Settings:
         self.canvasOffset = _alignedOffset(self.canvasAlignment, self.canvasOffset, self.canvasSize, self.plateSize)
 
         self._validate()
+
+        print(f"Loaded settings from file '{path}'\n")
+
+    # loads the slicer section of settings from a per-slicer JSON file
+    def initFromSlicerJson(self, path: str):
+        if not self._initFromJson(path, _SLICER_FIELDS, _MACHINE_FIELDS, "machine"):
+            return
 
         print(f"Loaded settings from file '{path}'\n")

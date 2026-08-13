@@ -1,0 +1,10 @@
+// Every setting here has the right *name* and the wrong *type*, and every name
+// belongs on the slicer side. None of them should be applied -
+// initFromSlicerJson prints a message per offender and leaves the field at its
+// default.
+{
+    "visualization": {
+        "instructionTypes": ["a", "b"], // 2-element, want 4
+        "segmentTypes": [1, 2, 3]       // list of numbers, want strings
+    }
+}

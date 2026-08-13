@@ -93,14 +93,19 @@ def _evalTemplateBlock(expr: str, replace: dict[str, str | float], sourceName: s
         return _fmtNum(result)
     return str(result)
 
-# adds the contents of srcFile to the end of destFile, evaluating each {...} block as
-# an arithmetic expression against replace and substituting in the result. sourceName
-# (the template's own path) only affects the warning printed for a bad block
-def _fileAppend(srcFile: TextIO, destFile: TextIO, replace: dict[str, str | float] = {}, sourceName: str = ""):
-    for line in srcFile:
-        if "{" in line: # this saves time because the regex sub below is slower and most lines don't need it
-            line = _TEMPLATE_BLOCK.sub(lambda m: _evalTemplateBlock(m.group(1), replace, sourceName), line)
-        destFile.write(line)
+# reads path and evaluates each {...} block in it as an arithmetic expression against
+# replace, returning the substituted text. path also names itself in the warning printed
+# for a bad block. Returns a string (rather than writing straight to a destination file)
+# so the result can itself be fed into replace under MACHINE_PREFIX/MACHINE_SUFFIX - a
+# slicer template nests a machine template's rendered gcode inside its own header/footer
+def _renderTemplate(path: str, replace: dict[str, str | float] = {}) -> str:
+    with open(path, "r") as srcFile:
+        lines = []
+        for line in srcFile:
+            if "{" in line: # this saves time because the regex sub below is slower and most lines don't need it
+                line = _TEMPLATE_BLOCK.sub(lambda m: _evalTemplateBlock(m.group(1), replace, path), line)
+            lines.append(line)
+    return "".join(lines)
 
 # the next feature name in visualization.style == "segment"'s cycle, given the
 # previous one - shared by _addLine's real cycling and _addPath's lookahead (see
@@ -418,6 +423,14 @@ def _perimeterWalk(gaps: list[bool], plateCorners: list[tuple[float, float]], ca
         j = (j - 1) % 4
     return polygon
 
+# formats the plate rect's own 4 corners the same way _bedExcludeArea formats its
+# polygon - for a slicer config header's printable_area (in this case, the total
+# area the extruder can move, disregarding the pen offset and canvas size)
+def _printableArea(plateSize: complex) -> str:
+    plateW, plateH = plateSize.real, plateSize.imag
+    corners = [(0.0, 0.0), (plateW, 0.0), (plateW, plateH), (0.0, plateH)]
+    return ",".join(f"{_fmtNum(x)}x{_fmtNum(y)}" for x, y in corners)
+
 # builds the bed_exclude_area polygon (plate minus canvas) as a formatted point string
 def _bedExcludeArea(plateSize: complex, canvasMin: complex, canvasMax: complex) -> str:
     plateW, plateH = plateSize.real, plateSize.imag
@@ -517,7 +530,10 @@ def createFile(geom: Document, settings: Settings, fileOut: str) -> bool:
                 "LINE_WIDTH": settings.penWidth,
                 "WAIT_FOR_PEN": _waitForPen(settings),
                 "END_X": settings.endPos.real,
-                "END_Y": settings.endPos.imag
+                "END_Y": settings.endPos.imag,
+                "PRINTABLE_AREA": _printableArea(settings.plateSize),
+                "PRINTABLE_HEIGHT": settings.maxHeight,
+                "PRINTER_MODEL": settings.printerModel,
             }
             if settings.showPenPos:
                 canvasMin = settings.canvasOffset
@@ -527,8 +543,14 @@ def createFile(geom: Document, settings: Settings, fileOut: str) -> bool:
                 replace["EXTRUDER_OFFSET"] = "0x2" # 0x2 is the default offset in bambu studio
             replace["BED_EXCLUDE_AREA"] = _bedExcludeArea(settings.plateSize, canvasMin, canvasMin + settings.canvasSize)
 
-            with open(settings.prefixFile, "r") as srcFile:
-                _fileAppend(srcFile, destFile, replace, settings.prefixFile)
+            # the machine templates render first so their gcode can be nested inside
+            # the slicer templates via {MACHINE_PREFIX}/{MACHINE_SUFFIX} - the slicer
+            # wraps the machine's own gcode in its header/footer syntax rather than
+            # the two sitting beside each other
+            replace["MACHINE_PREFIX"] = _renderTemplate(settings.machinePrefixFile, replace)
+            replace["MACHINE_SUFFIX"] = _renderTemplate(settings.machineSuffixFile, replace)
+
+            destFile.write(_renderTemplate(settings.slicerPrefixFile, replace))
             destFile.write("\n")
 
             objectCount = 0
@@ -542,8 +564,7 @@ def createFile(geom: Document, settings: Settings, fileOut: str) -> bool:
                 _moveRect(state, settings, geom.bounds(), destFile, LineType._DOCUMENT_BOUNDS)
 
             destFile.write("\n")
-            with open(settings.suffixFile, "r") as srcFile:
-                _fileAppend(srcFile, destFile, replace, settings.suffixFile)
+            destFile.write(_renderTemplate(settings.slicerSuffixFile, replace))
         os.replace(tempPath, fileOut)
         tempPath = None
         if outOfBoundsNames:

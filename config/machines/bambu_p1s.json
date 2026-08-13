@@ -1,6 +1,10 @@
 {
     // settings related to the physical machine
     "machine": {
+        // written into a slicer's config header - purely descriptive, no effect on motion
+        "printerModel": "Bambu Lab P1S",
+        "maxHeight": 250, // mm
+
         "startPos": [128, 128, 9], // starting position of the nozzle
         "endPos": [128, 256], // final position of the nozzle
         "penOffset": [-38, 0], // position of the pen relative to the nozzle
@@ -41,27 +45,21 @@
         "tessellationTolerance": 0.012, // max allowed deviation (mm) of gcode from the true curve
         "showOutOfBounds": false, // if true, segments outside the canvas are still drawn, tagged as the "invalid" line type for slicer-preview visibility; if false (default), they're cropped to the canvas edge instead
 
-        "prefixFile": "gcode_templates/bambu_p1s_prefix.gcode",
-        "suffixFile": "gcode_templates/bambu_p1s_suffix.gcode"
+        "machinePrefixFile": "gcode_templates/machines/bambu_p1s_prefix.gcode",
+        "machineSuffixFile": "gcode_templates/machines/bambu_p1s_suffix.gcode"
     },
 
-    // controls how the gcode looks in bambu studio
-    // these settings do not affect the printed result
+    // how the drawing renders in whichever slicer's preview - the slicer config only
+    // supplies that slicer's own vocabulary (lineTypes/instructionTypes/segmentTypes,
+    // styleChangeMessage/layerChangeMessage) for these choices to draw from
     "visualization": {
         "showPenPos": true, // if false, nozzle position will be shown in slicer
         "objectHeightChange": true, // if true, slightly increases the height of every other object so they show as seperate layers when viewed in the slicer
 
-        // leave empty to disable these
-        "styleChangeMessage": "; FEATURE: %s", // printed before a line whose feature (draw role) changes; %s will be replaced by the feature name
-        "layerChangeMessage": "; CHANGE_LAYER", // printed between objects when objectHeightChange is true
-
-        "style": "role", // options are "role", "instruction", and "segment"
-          // role: shows role of lines in slicer view (uses lineTypes)
-          // instruction: shows g1/g2/g3 instructions with different colors (uses instructionTypes)
-          // segment: shows each line segment as a different color, cycling through segmentTypes
-        "lineTypes": {"stroke": "Outer wall", "infill": "Internal solid infill", "gapInfill": "Gap infill", "invalid": "Invalid", "_segmentBounds": "Support transition", "_pathBounds": "Support interface", "_documentBounds": "Support"},
-        "instructionTypes": ["Sparse infill", "Support interface", "Overhang wall", "Gap infill"], // index 0 is G1, 1 is G2, 2 is G3, 3 is everything else
-        "segmentTypes": ["Top surface", "Outer wall", "Inner wall", "Support", "Bridge", "Internal solid infill"]
+        "style": "role" // options are "role", "instruction", and "segment"
+          // role: shows role of lines in slicer view
+          // instruction: shows g1/g2/g3 instructions with different colors
+          // segment: shows each line segment or arc as a different color
     },
 
     // debug settings

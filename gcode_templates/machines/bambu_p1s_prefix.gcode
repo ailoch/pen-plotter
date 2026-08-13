@@ -1,99 +1,8 @@
-; HEADER_BLOCK_START
-; BambuStudio 02.07.00.55
-; max_z_height: {TRAVEL_HEIGHT}
-; filament: 1
-; HEADER_BLOCK_END
-
-; CONFIG_BLOCK_START
-; bed_exclude_area = {BED_EXCLUDE_AREA}
-; curr_bed_type = High Temp Plate
-; extruder_offset = {EXTRUDER_OFFSET}
-; gcode_flavor = marlin
-; host_type = octoprint
-; nozzle_diameter = 0.4
-; print_settings_id = Plotter
-; printable_area = 0x0,256x0,256x256,0x256
-; printable_height = 250
-; printer_model = Bambu Lab P1S
-; printer_settings_id = P1S Plotter
-; printhost_authorization_type = key
-; printhost_ssl_ignore_revoke = 0
-; =
-; =
-; =
-; =
-; =
-; =
-; =
-; =
-; =
-; =
-; =
-; =
-; =
-; =
-; =
-; =
-; =
-; =
-; =
-; =
-; =
-; =
-; =
-; =
-; =
-; =
-; =
-; =
-; =
-; =
-; =
-; =
-; =
-; =
-; =
-; =
-; =
-; =
-; =
-; =
-; =
-; =
-; =
-; =
-; =
-; =
-; =
-; =
-; =
-; =
-; =
-; =
-; =
-; =
-; =
-; =
-; =
-; =
-; =
-; =
-; =
-; =
-; =
-; =
-; =
-; =
-; =
-; CONFIG_BLOCK_END
-
-; EXECUTABLE_BLOCK_START
 M201 X20000 Y20000 Z500 E5000 ; hard accel limits
 M203 X500 Y500 Z20 E30 ; hard speed limits
 M204 P20000 R5000 T20000 ; initial accel
 M205 X9 Y9 Z3 E2.50 ; max jerk
 
-; FEATURE: Custom
 M710 A1 S255 ;turn on MC fan
 M104 S0
 
@@ -123,6 +32,3 @@ G21 ; use mm
 
 ; allow pen to be loaded
 {WAIT_FOR_PEN}
-
-; LAYER_HEIGHT: 0.2
-; LINE_WIDTH: {LINE_WIDTH}

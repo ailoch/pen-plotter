@@ -1,12 +1,13 @@
-// Every setting here has the right *name* and the wrong *type*. None of them
-// should be applied - initFromJson prints a message per offender and leaves the
-// field at its default. Grouped by which branch of the type checking rejects it.
+// Every setting here has the right *name* and the wrong *type*, and every name
+// belongs on the machine side. None of them should be applied -
+// initFromMachineJson prints a message per offender and leaves the field at its
+// default. Grouped by which branch of the type checking rejects it.
 {
     // --- generic type check (type(setting) != type(default)) ---
     "processing": {
         "fillSpacing": "0.3",           // str, want number
         "generateGapInfill": "true",    // str, want bool
-        "prefixFile": 5,                // number, want str
+        "machinePrefixFile": 5,         // number, want str
         "unknownSetting": 1             // not a Settings field at all
     },
     "motion": {
@@ -24,8 +25,6 @@
         "safeZoneAlignment": "bottom"   // ditto
     },
     "visualization": {
-        "style": "rainbow",             // not role/instruction/segment
-        "instructionTypes": ["a", "b"], // 2-element, want 4
-        "segmentTypes": [1, 2, 3]       // list of numbers, want strings
+        "style": "rainbow"              // not role/instruction/segment
     }
 }

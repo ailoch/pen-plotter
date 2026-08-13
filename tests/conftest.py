@@ -8,7 +8,8 @@ import sys
 import pytest
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-CONFIG = "config/bambu_p1s_config.json"
+MACHINE_CONFIG = "config/machines/bambu_p1s.json"
+SLICER_CONFIG = "config/slicers/bambu_studio.json"
 
 # lib/ is imported as "lib.x", so the repo root has to be importable
 if REPO_ROOT not in sys.path:
@@ -31,6 +32,7 @@ def settings():
     """
     from lib.settings import Settings
     s = Settings()
-    s.initFromJson(CONFIG)
+    s.initFromMachineJson(MACHINE_CONFIG)
+    s.initFromSlicerJson(SLICER_CONFIG)
     s.profiling = False
     return s

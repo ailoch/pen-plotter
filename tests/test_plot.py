@@ -16,9 +16,9 @@ from lib.geometry import Arc, Document, Line, Path, PathObject
 from lib.plot import (
     _LOAD_PROGRESS_MAX_INTERVAL, _LOAD_PROGRESS_MAX_STEP, _LOAD_PROGRESS_MIN_STEP,
     _DrawState, _addLine, _addPath, _bedExcludeArea, _bridgeContours, _canvasBoundsNozzle,
-    _emitSegment, _evalTemplateBlock, _eValue, _fileAppend, _fmtNum, _inBounds, _moveRect,
-    _nextSegmentType, _penMove, _perimeterWalk, _removeRedundantPoints,
-    _skipRepeatedClosingColor, _splitAtBounds, _waitForPen, createFile,
+    _emitSegment, _evalTemplateBlock, _eValue, _fmtNum, _inBounds, _moveRect,
+    _nextSegmentType, _penMove, _perimeterWalk, _printableArea, _removeRedundantPoints,
+    _renderTemplate, _skipRepeatedClosingColor, _splitAtBounds, _waitForPen, createFile,
 )
 from lib.settings import LineType, Settings
 
@@ -132,11 +132,10 @@ def testDisallowedTemplateExpressionsAreLeftVerbatim(expr, capsys):
     assert _evalTemplateBlock(expr, _TEMPLATE_NS) == "{" + expr + "}"
     assert "Warning" in capsys.readouterr().out
 
-def testFileAppendSubstitutesEveryBlockAndCopiesPlainLines():
-    src = io.StringIO("G1 F{SPEED}\n; no braces here\nX{SPEED/2} Y{NAME}\n")
-    dest = io.StringIO()
-    _fileAppend(src, dest, _TEMPLATE_NS)
-    assert dest.getvalue() == "G1 F3000\n; no braces here\nX1500 Y0x2\n"
+def testRenderTemplateSubstitutesEveryBlockAndCopiesPlainLines(tmp_path):
+    src = tmp_path / "template.gcode"
+    src.write_text("G1 F{SPEED}\n; no braces here\nX{SPEED/2} Y{NAME}\n")
+    assert _renderTemplate(str(src), _TEMPLATE_NS) == "G1 F3000\n; no braces here\nX1500 Y0x2\n"
 
 def testTemplateWarningNamesItsSourceFile(capsys):
     """createFile passes its own prefix/suffix path through as sourceName, so a bad
@@ -578,6 +577,11 @@ def testExcludeAreaCarriesNoRedundantPoints(canvasMin, canvasMax, label):
     polygon = _parsePolygon(_bedExcludeArea(_PLATE, canvasMin, canvasMax))
     assert _removeRedundantPoints(polygon) == polygon, label
 
+def testPrintableAreaFormatsThePlatesOwnFourCorners():
+    """Unlike _bedExcludeArea, printable_area always names the whole plate -
+    there's no canvas rect to subtract."""
+    assert _printableArea(256 + 256j) == "0x0,256x0,256x256,0x256"
+
 
 #endregion
 
@@ -654,13 +658,22 @@ def testNonPositiveDelayEmitsNoCountdown(delay):
 
 @pytest.fixture
 def templates(tmp_path):
-    """A prefix/suffix pair covering every substitution createFile supplies."""
+    """A slicer prefix/suffix pair covering every substitution createFile supplies,
+    plus a trivial machine prefix/suffix pair - createFile nests the machine
+    templates' rendered text into the slicer ones via {MACHINE_PREFIX}/
+    {MACHINE_SUFFIX}, so both call sites need a real file to open even in tests
+    that don't otherwise care about the machine side."""
     prefix = tmp_path / "prefix.gcode"
     prefix.write_text("; speed={TRAVEL_SPEED} half={TRAVEL_SPEED/2} width={LINE_WIDTH}\n"
-                      "; offset={EXTRUDER_OFFSET}\n; exclude={BED_EXCLUDE_AREA}\n")
+                      "; offset={EXTRUDER_OFFSET}\n; exclude={BED_EXCLUDE_AREA}\n"
+                      "{MACHINE_PREFIX}")
     suffix = tmp_path / "suffix.gcode"
-    suffix.write_text("; end={END_X},{END_Y}\n")
-    return prefix, suffix
+    suffix.write_text("{MACHINE_SUFFIX}; end={END_X},{END_Y}\n")
+    machinePrefix = tmp_path / "machine_prefix.gcode"
+    machinePrefix.write_text("; machine prefix\n")
+    machineSuffix = tmp_path / "machine_suffix.gcode"
+    machineSuffix.write_text("; machine suffix\n")
+    return prefix, suffix, machinePrefix, machineSuffix
 
 def _document() -> Document:
     doc = Document()
@@ -668,8 +681,10 @@ def _document() -> Document:
     return doc
 
 def _fileSettings(templates, **overrides) -> Settings:
-    prefix, suffix = templates
-    base = dict(prefixFile=str(prefix), suffixFile=str(suffix), penWidth=0.4, endPos=5 + 6j,
+    slicerPrefix, slicerSuffix, machinePrefix, machineSuffix = templates
+    base = dict(slicerPrefixFile=str(slicerPrefix), slicerSuffixFile=str(slicerSuffix),
+                machinePrefixFile=str(machinePrefix), machineSuffixFile=str(machineSuffix),
+                penWidth=0.4, endPos=5 + 6j,
                 speeds={LineType.STROKE: 600, LineType.TRAVEL: 3000},
                 accels={LineType.STROKE: 500, LineType.TRAVEL: 1000},
                 plateSize=150 + 150j, canvasOffset=25 + 25j)
@@ -682,6 +697,18 @@ def testCreateFileWritesPrefixBodyAndSuffix(tmp_path, templates):
     assert text.startswith("; speed=3000 half=1500 width=0.4\n")
     assert "; end=5,6\n" in text
     assert "G1 X60 Y60 E42.42641" in text, "the body sits between them"
+
+def testMachineTemplatesAreNestedInsideSlicerTemplates(tmp_path, templates):
+    """{MACHINE_PREFIX}/{MACHINE_SUFFIX} in the slicer templates are replaced with
+    the machine templates' own rendered text - the placeholders themselves never
+    reach the output file."""
+    out = tmp_path / "out.gcode"
+    createFile(_document(), _fileSettings(templates), str(out))
+    text = out.read_text()
+    assert "; machine prefix" in text
+    assert "; machine suffix" in text
+    assert "{MACHINE_PREFIX}" not in text
+    assert "{MACHINE_SUFFIX}" not in text
 
 def testPenOffsetGoesToTheSlicerWhenShowingPenPositions(tmp_path, templates):
     """showPenPos hands the real offset to the slicer, which then applies it itself -
@@ -701,14 +728,14 @@ def testAFailedWriteLeavesTheExistingFileIntact(tmp_path, templates, capsys):
     suffix template) must not truncate whatever was already there."""
     out = tmp_path / "out.gcode"
     out.write_text("PRECIOUS")
-    settings = _fileSettings(templates, suffixFile=str(tmp_path / "missing.gcode"))
+    settings = _fileSettings(templates, slicerSuffixFile=str(tmp_path / "missing.gcode"))
     assert createFile(_document(), settings, str(out)) is False
     assert out.read_text() == "PRECIOUS"
     assert "missing.gcode" in capsys.readouterr().out, "the message must name a path the user typed"
 
 def testFailedWritesLeaveNoTempFilesBehind(tmp_path, templates):
     out = tmp_path / "out.gcode"
-    settings = _fileSettings(templates, suffixFile=str(tmp_path / "missing.gcode"))
+    settings = _fileSettings(templates, slicerSuffixFile=str(tmp_path / "missing.gcode"))
     createFile(_document(), settings, str(out))
     assert list(tmp_path.glob("*.tmp")) == []
 

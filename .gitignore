@@ -2,7 +2,7 @@
 *.svg
 *.tmp
 !testDrawing.svg
-!gcode_templates/*.gcode
+!gcode_templates/**/*.gcode
 !tests/*.svg
 __pycache__/
 .pytest_cache/
