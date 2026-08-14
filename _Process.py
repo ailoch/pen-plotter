@@ -7,10 +7,13 @@ from lib.stroke import generateStroke, dropRawGeometry
 from lib.infill import generateInfill
 from lib.route import orderPaths
 from lib.plot import createFile
+from lib.calibration import calibrationEnabled, generateCalibration
 
 settings = Settings()
 settings.initFromSlicerJson("config/slicers/bambu_studio.json")
 settings.initFromMachineJson("config/machines/bambu_p1s.json")
+
+calibrating = calibrationEnabled(settings)
 
 def promptInputFile(previous: str | None = None) -> str:
     while True:
@@ -43,8 +46,8 @@ def promptOutputFile(previous: str | None = None) -> str:
             continue
         return path
 
-fileIn = promptInputFile()
-fileOut = promptOutputFile()
+fileIn = "" if calibrating else promptInputFile()
+fileOut = f"test_{settings.calibrationTest}.gcode" if calibrating else promptOutputFile()
 
 class RunResult(Enum):
     SUCCESS = auto()
@@ -57,24 +60,33 @@ class RunResult(Enum):
 # when the input file changes so it gets re-parsed
 document: Document | None = None
 
+# starts the run timer and, if enabled, the profiler - called once the interactive
+# questions are out of the way, so user thinking time isn't counted or profiled
+def startTiming() -> tuple[float, cProfile.Profile | None]:
+    profiler = cProfile.Profile() if settings.profiling else None
+    if profiler:
+        profiler.enable()
+    return time.perf_counter(), profiler
+
 def run() -> RunResult:
     global document
 
-    if document is None:
+    if document is None and calibrating:
+        # the test's own parameter questions come first, same as promptRescale below
+        sheet = generateCalibration(settings)
+        startTime, profiler = startTiming()
+        # already final drawable geometry: no stroke/infill to generate, and no
+        # routing either, since a sweep is only readable in the order it was built
+        document = sheet
+    elif document is None:
         try:
             svg = loadSvg(fileIn)
         except SvgParseError as e:
             print(e)
             return RunResult.BAD_INPUT
-        # the rescale question is interactive, so ask it before the timer and
-        # profiler start - user thinking time shouldn't count toward the reported
-        # time or pollute the profile
         scaleX, scaleY = promptRescale(svg, settings)
 
-        startTime = time.perf_counter()
-        profiler = cProfile.Profile() if settings.profiling else None
-        if profiler:
-            profiler.enable()
+        startTime, profiler = startTiming()
 
         document = parseSvg(svg, settings, scaleX, scaleY)
         generateStroke(document, settings)
@@ -82,11 +94,8 @@ def run() -> RunResult:
         dropRawGeometry(document)
         orderPaths(document, settings)
     else:
-        # reusing an already-parsed document (output retry): time/profile the write only
-        startTime = time.perf_counter()
-        profiler = cProfile.Profile() if settings.profiling else None
-        if profiler:
-            profiler.enable()
+        # reusing an already-built document (output retry): time/profile the write only
+        startTime, profiler = startTiming()
 
     ok = createFile(document, settings, fileOut)
 

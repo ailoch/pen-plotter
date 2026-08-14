@@ -55,7 +55,7 @@ _MACHINE_FIELDS = frozenset({
     "heights", "speeds", "accels", "shortTravelThresholds",
     "loadDelay", "showLoadProgress", "eAxisMultiplier",
     "penWidth", "fillSpacing", "generateGapInfill", "generateStroke",
-    "tessellationTolerance", "showOutOfBounds",
+    "tessellationTolerance", "showOutOfBounds", "calibrationTest",
     "machinePrefixFile", "machineSuffixFile",
     # showPenPos/objectHeightChange/style pick *how* a drawing renders, but that
     # choice is about the file being generated, not about a slicer's syntax. the
@@ -108,6 +108,8 @@ class Settings:
     generateStroke: bool = True # if false, strokes draw as a single centerline pass regardless of strokeWidth (the pre-multi-pass behavior) instead of expanding to multiple passes
     tessellationTolerance: float = .012
     showOutOfBounds: bool = False # if true, segments outside the canvas are still drawn, tagged LineType.INVALID for slicer-preview visibility; if false, they're cropped to the canvas edge
+
+    calibrationTest: str = "none" # "none" draws normally; any other value must name a test registered in lib/calibration.py's CALIBRATION_TESTS, which then replaces the whole SVG pipeline with that test's own prompts and a test_<name>.gcode file
 
     machinePrefixFile: str = "gcode_templates/machines/default_prefix.gcode"
     machineSuffixFile: str = "gcode_templates/machines/default_suffix.gcode"

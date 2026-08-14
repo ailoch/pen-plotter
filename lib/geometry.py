@@ -980,6 +980,10 @@ class PathObject:
     geometry: list[Path] = field(default_factory=lambda: [Path()])
     style: Style = field(default_factory=Style)
     transform : Transform = field(default_factory=Transform)
+    # per-object motion settings replacing the Settings defaults for this object's draw
+    # moves only, in the same units Settings uses (mm, mm/min, mm/s^2). Keys are named
+    # in lib/plot.py's _MOTION_OVERRIDES; an empty dict (the usual case) changes nothing
+    overrides: dict[str, float] = field(default_factory=dict)
 
     def __iadd__(self, segment):
         self.geometry[-1].segments.append(segment)

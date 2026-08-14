@@ -45,6 +45,8 @@
         "tessellationTolerance": 0.012, // max allowed deviation (mm) of gcode from the true curve
         "showOutOfBounds": false, // if true, segments outside the canvas are still drawn, tagged as the "invalid" line type for slicer-preview visibility; if false (default), they're cropped to the canvas edge instead
 
+        "calibrationTest": "none", // "none" draws SVGs normally; set to a calibration test's name instead (listed in README.md) to generate that test's sheet
+
         "machinePrefixFile": "gcode_templates/machines/bambu_p1s_prefix.gcode",
         "machineSuffixFile": "gcode_templates/machines/bambu_p1s_suffix.gcode"
     },

@@ -1,5 +1,5 @@
 import ast, math, operator, os, re, tempfile
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TextIO
 
 from lib.geometry import Line, Arc, PathObject, Document
@@ -20,6 +20,24 @@ class _DrawState:
     lastSpeed: float = 0
     lastAccel: float = 0
     lastLineType: LineType | None = None # role of the most recent draw move, for shortTravelThresholds' min-of-both-roles check
+    # the object being drawn right now, so the emitters can reach it without threading
+    # it through every signature. _addPath sets both per object
+    overrides: dict[str, float] = field(default_factory=dict)
+
+# the PathObject.overrides keys each motion lookup below honors, and the Settings field
+# each one replaces. Overrides only ever apply to an object's own draw moves - the pen
+# still lifts and travels at the configured travel height/speed between them
+_MOTION_OVERRIDES = ("height", "speed", "accel")
+
+# the draw height/speed/accel for lineType, letting the current object's overrides win
+def _drawHeight(state: _DrawState, settings: Settings, lineType: LineType | None) -> float:
+    return state.overrides.get("height", settings.heights[lineType or LineType.STROKE])
+
+def _drawSpeed(state: _DrawState, settings: Settings, lineType: LineType) -> float | None:
+    return state.overrides.get("speed", settings.speeds.get(lineType))
+
+def _drawAccel(state: _DrawState, settings: Settings, lineType: LineType) -> float | None:
+    return state.overrides.get("accel", settings.accels.get(lineType))
 
 #region object to gcode
 
@@ -130,8 +148,11 @@ def _skipRepeatedClosingColor(state: _DrawState, settings: Settings, firstColor:
 # param "accel" sets printer accel using m204 in seperate instruction
 def _addLine(state: _DrawState, settings: Settings, args: dict[str, str | float | None], file: TextIO, lineType: LineType | None = None):
     if lineType:
-        args["F"] = settings.speeds.get(lineType)
-        args["accel"] = settings.accels.get(lineType)
+        # a travel move is the machine repositioning between drawn things, not part of
+        # what any one object asked for, so overrides deliberately don't reach it
+        override = lineType != LineType.TRAVEL
+        args["F"] = _drawSpeed(state, settings, lineType) if override else settings.speeds.get(lineType)
+        args["accel"] = _drawAccel(state, settings, lineType) if override else settings.accels.get(lineType)
         args["type"] = settings.lineTypes.get(lineType)
 
     line = ""
@@ -196,8 +217,10 @@ def _eValue(settings: Settings, length: float) -> float:
 # penMoves and by Arc draws, which (unlike Line draws) have no X/Y/Z move of their
 # own to piggyback a height change on since G2/G3 only carries the endpoint
 def _setDrawHeight(state: _DrawState, settings: Settings, file: TextIO, lineType: LineType | None = None, raised: bool = False):
-    newHeight = settings.heights[lineType or LineType.STROKE]
-    if raised:
+    newHeight = _drawHeight(state, settings, lineType)
+    # the preview raise is skipped under a height override, so a sheet sweeping height
+    # draws the exact values it was asked for rather than half of them +0.001
+    if raised and "height" not in state.overrides:
         newHeight += .001
     if state.pos["Z"] != newHeight:
         _addLine(state, settings, {"G": "1", "Z": newHeight}, file)
@@ -303,6 +326,10 @@ def _splitAtBounds(segment: Line | Arc, bounds: tuple[float, float, float, float
 def _addPath(state: _DrawState, settings: Settings, object: PathObject, file: TextIO, raised: bool = False, outOfBoundsNames: list[str] | None = None):
     bounds = _canvasBoundsNozzle(settings)
     droppedThisObject = False
+    state.overrides = {k: v for k, v in object.overrides.items() if k in _MOTION_OVERRIDES}
+    for name in object.overrides:
+        if name not in _MOTION_OVERRIDES:
+            print(f"Warning: unknown motion override '{name}' on object '{object.id}'; ignoring it.")
     for path in object.geometry:
         # RAW_GEOMETRY is a source for stroke/fill generation, never drawn itself
         if path.lineType == LineType.RAW_GEOMETRY:
@@ -344,6 +371,7 @@ def _addPath(state: _DrawState, settings: Settings, object: PathObject, file: Te
             for segment in path.segments:
                 _moveRect(state, settings, segment.bounds(), file, LineType._SEGMENT_BOUNDS)
         _moveRect(state, settings, object.bounds(), file, LineType._PATH_BOUNDS)
+    state.overrides = {} # the next object's own overrides replace these; anything drawn between objects uses the plain settings
 
 # endregion
 

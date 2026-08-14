@@ -442,6 +442,62 @@ def testAnObjectIsOnlyNamedOnce():
 
 #endregion
 
+#region per-object motion overrides
+
+
+def _line(objId: str = "o", overrides: dict[str, float] | None = None) -> PathObject:
+    return PathObject(objId, [Path([Line(40 + 40j, 60 + 40j)], LineType.STROKE)],
+                      overrides=overrides or {})
+
+_MOTION_SETTINGS = dict(speeds={LineType.STROKE: 600, LineType.TRAVEL: 3000},
+                        accels={LineType.STROKE: 500, LineType.TRAVEL: 1000})
+
+def testOverridesReplaceTheSettingsValuesForThatObject():
+    settings = _settings(**_MOTION_SETTINGS)
+    obj = _line(overrides={"height": 7.0, "speed": 1234.0, "accel": 4321.0})
+    lines = _emit(lambda st, f: _addPath(st, settings, obj, f))
+    assert lines[-4:] == ["G1 Z7", "M204 S4321", "; FEATURE: Stroke", "G1 X60 E20 F1234"]
+
+def testAnObjectWithoutOverridesStillUsesTheSettingsValues():
+    settings = _settings(**_MOTION_SETTINGS)
+    lines = _emit(lambda st, f: _addPath(st, settings, _line(), f))
+    assert "M204 S500" in lines
+    assert f"G1 Z{_DRAW_Z:g}" in lines
+
+def testOverridesDoNotReachTravelMoves():
+    """A sweep still has to travel between its rows at the configured travel
+    height/speed - the override describes how the object draws, not how the machine
+    gets there."""
+    settings = _settings(**_MOTION_SETTINGS)
+    obj = _line(overrides={"height": 7.0, "speed": 1234.0})
+    lines = _emit(lambda st, f: _addPath(st, settings, obj, f), _state(0, 0, 0))
+    assert f"G1 Z{_TRAVEL_Z:g} F3000" in lines, "the pen lift keeps the travel speed"
+
+def testOverridesDoNotLeakIntoTheNextObject():
+    settings = _settings(**_MOTION_SETTINGS)
+    def emitBoth(st, f):
+        _addPath(st, settings, _line("a", {"height": 7.0}), f)
+        _addPath(st, settings, _line("b"), f)
+    lines = _emit(emitBoth)
+    assert lines.index("G1 Z7") < lines.index(f"G1 Z{_DRAW_Z:g}"), "b falls back to the settings height"
+
+def testAHeightOverrideSuppressesThePreviewRaise():
+    """objectHeightChange's +0.001mm would otherwise land on half the rows of a sheet
+    that is specifically sweeping height."""
+    settings = _settings(**_MOTION_SETTINGS)
+    lines = _emit(lambda st, f: _addPath(st, settings, _line(overrides={"height": 7.0}), f, True))
+    assert "G1 Z7" in lines
+    assert "G1 Z7.001" not in lines
+
+def testAnUnknownOverrideIsReportedAndIgnored(capsys):
+    settings = _settings(**_MOTION_SETTINGS)
+    lines = _emit(lambda st, f: _addPath(st, settings, _line(overrides={"heigth": 7.0}), f))
+    assert "heigth" in capsys.readouterr().out
+    assert f"G1 Z{_DRAW_Z:g}" in lines, "the typo'd key changed nothing"
+
+
+#endregion
+
 #region bed exclude area
 
 
