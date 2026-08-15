@@ -1,18 +1,19 @@
-"""Unit tests for lib/calibration.py's shared calibration-sheet framework: the input
-prompts, the ramp/layout helpers, the stroke font, and the test registry/entry point.
-Individual calibration tests (height, speed, ...) get their own coverage as each is
-added - this file only exercises what commit 1 ships: the framework with nothing
-registered yet.
+"""Unit tests for lib/calibration.py: the shared framework (input prompts, ramp/layout
+helpers, the stroke font, the test registry/entry point) and each individual
+calibration test as it's added.
 """
+import glob
+
 import pytest
 
 from lib.calibration import (
-    CALIBRATION_TESTS, Pass, _GLYPH_ADVANCE, _GLYPH_WIDTH, _GLYPHS, _centerPasses,
+    CALIBRATION_TESTS, Pass, _GLYPH_ADVANCE, _GLYPH_WIDTH, _GLYPHS, _HEIGHT_TEST_LINE_LENGTH,
+    _HEIGHT_TEST_TICK_5, _HEIGHT_TEST_TICK_10, _LABEL_CAP_HEIGHT, _centerPasses, _heightTest,
     _rampValues, _textPaths, _textWidth, _translatePaths, calibrationEnabled,
     generateCalibration, promptNumber, promptRamp,
 )
 from lib.geometry import Line, Path
-from lib.plot import createFile
+from lib.plot import _canvasBoundsNozzle, createFile
 from lib.settings import LineType, Settings
 
 
@@ -287,9 +288,120 @@ def testCalibrationEnabledListsRegisteredNamesInTheWarning(capsys, registeredTes
     calibrationEnabled(Settings(calibrationTest="not_a_real_test"))
     assert registeredTest in capsys.readouterr().out
 
-def testRegistryShipsEmpty():
-    """Commit 1 is the framework only - each calibration test registers itself as
-    it's added, so nothing should be registered yet."""
-    assert CALIBRATION_TESTS == {}
+def testRegistryHasOnlyTheShippedTests():
+    assert set(CALIBRATION_TESTS) == {"height"}
+
+#endregion
+
+
+#region height test
+
+def testHeightTestBuildsOnePassPerRampValue(monkeypatch):
+    _feedInputs(monkeypatch, "1", "3", "1")
+    passes = _heightTest(Settings())
+    assert [p.height for p in passes] == [1.0, 2.0, 3.0]
+    assert [p.label for p in passes] == ["1", "2", "3"]
+
+def testHeightTestStacksLowestValueAtTheBottom(monkeypatch):
+    _feedInputs(monkeypatch, "1", "3", "1")
+    passes = _heightTest(Settings())
+    ys = []
+    for p in passes:
+        segment = p.geometry[0].segments[0]
+        assert isinstance(segment, Line)
+        ys.append(segment.start.imag)
+    assert ys == sorted(ys), "ascending height sweep order already puts the lowest Z first"
+
+def testHeightTestPitchScalesWithPenWidth(monkeypatch):
+    _feedInputs(monkeypatch, "1", "3", "1")
+    passes = _heightTest(Settings(penWidth=0.4))
+    ys = []
+    for p in passes:
+        segment = p.geometry[0].segments[0]
+        assert isinstance(segment, Line)
+        ys.append(segment.start.imag)
+    assert ys[1] - ys[0] == pytest.approx(3.5 * 0.4)
+
+def testHeightTestEveryTenthLineIsLabelledStartingFromTheFirst(monkeypatch):
+    _feedInputs(monkeypatch, "1", "12", "1") # 12 passes: indices 0-11
+    passes = _heightTest(Settings())
+    labelled = [i for i, p in enumerate(passes) if p.labelOrigin is not None]
+    assert labelled == [0, 10]
+
+def testHeightTestLabelSitsToTheRightOfItsLine(monkeypatch):
+    _feedInputs(monkeypatch, "1", "2", "1") # first pass (index 0) is always labelled
+    passes = _heightTest(Settings())
+    segment = passes[0].geometry[0].segments[0]
+    assert isinstance(segment, Line)
+    assert passes[0].labelOrigin is not None
+    assert passes[0].labelOrigin.real > max(segment.start.real, segment.end.real)
+
+def testHeightTestLabelIsVerticallyCenteredOnItsLine(monkeypatch):
+    _feedInputs(monkeypatch, "1", "2", "1") # first pass (index 0) is always labelled
+    passes = _heightTest(Settings())
+    segment = passes[0].geometry[0].segments[0]
+    assert isinstance(segment, Line)
+    assert passes[0].labelOrigin is not None
+    assert passes[0].labelOrigin.imag == pytest.approx(segment.start.imag - _LABEL_CAP_HEIGHT / 2)
+
+def testHeightTestEveryFifthAndTenthLineIsLonger(monkeypatch):
+    _feedInputs(monkeypatch, "1", "10", "1") # 10 passes: indices 0-9
+    passes = _heightTest(Settings())
+    lengths = []
+    for p in passes:
+        segment = p.geometry[0].segments[0]
+        assert isinstance(segment, Line)
+        lengths.append(abs(segment.end.real - segment.start.real))
+    plain = _HEIGHT_TEST_LINE_LENGTH
+    assert lengths == pytest.approx([
+        plain + _HEIGHT_TEST_TICK_10, plain, plain, plain, plain,
+        plain + _HEIGHT_TEST_TICK_5, plain, plain, plain, plain,
+    ])
+
+def testHeightTestAlternatesDrawDirectionEveryRow(monkeypatch):
+    """Rows draw in alternating directions so the pen only needs a pitch-sized hop
+    between consecutive rows, not a full-width trip back to x=0."""
+    _feedInputs(monkeypatch, "1", "4", "1")
+    passes = _heightTest(Settings())
+    for i, p in enumerate(passes):
+        segment = p.geometry[0].segments[0]
+        assert isinstance(segment, Line)
+        if i % 2 == 0:
+            assert segment.start.real < segment.end.real
+        else:
+            assert segment.start.real > segment.end.real
+
+def testHeightTestStaysInsideTheCanvasBounds(monkeypatch):
+    _feedInputs(monkeypatch, "1", "10", "1")
+    settings = Settings(canvasSize=100 + 100j)
+    passes = _heightTest(settings)
+    xmin, ymin, xmax, ymax = _canvasBoundsNozzle(settings)
+    for p in passes:
+        for path in p.geometry:
+            pxmin, pymin, pxmax, pymax = path.bounds()
+            assert xmin <= pxmin and pxmax <= xmax
+            assert ymin <= pymin and pymax <= ymax
+
+def testHeightRoundTripsThroughGenerateCalibration(monkeypatch):
+    _feedInputs(monkeypatch, "1", "10", "1") # 10 passes, so only the first gets a label
+    doc = generateCalibration(Settings(calibrationTest="height"))
+    assert [o.id for o in doc.objects] == ["1", "1 label", "2", "3", "4", "5", "6", "7", "8", "9", "10"]
+    assert doc.objects[0].overrides == {"height": 1.0}
+
+#endregion
+
+
+#region shipped config sanity
+
+def testNoShippedMachineConfigLeavesCalibrationEnabled():
+    """A machine config with calibrationTest left set to something other than "none"
+    would silently swap every normal run - including CI/manual testing against that
+    config - for a calibration sheet instead of a real drawing. Catches a value left
+    over from testing a sheet locally and accidentally committed."""
+    for path in sorted(glob.glob("config/machines/*.json")):
+        settings = Settings()
+        settings.initFromMachineJson(path)
+        assert settings.calibrationTest == "none", \
+            f"{path} has calibrationTest set to '{settings.calibrationTest}'; it must be 'none'"
 
 #endregion

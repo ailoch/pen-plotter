@@ -456,7 +456,9 @@ def testOverridesReplaceTheSettingsValuesForThatObject():
     settings = _settings(**_MOTION_SETTINGS)
     obj = _line(overrides={"height": 7.0, "speed": 1234.0, "accel": 4321.0})
     lines = _emit(lambda st, f: _addPath(st, settings, obj, f))
-    assert lines[-4:] == ["G1 Z7", "M204 S4321", "; FEATURE: Stroke", "G1 X60 E20 F1234"]
+    # the travel lift clears the override height (7 > the travel height) with a 1mm
+    # margin, so the draw itself still lowers back down to the exact override height
+    assert lines == ["M204 S1000", "G1 Z8 F3000", "G1 X40 Y40", "G1 Z7", "M204 S4321", "; FEATURE: Stroke", "G1 X60 E20 F1234"]
 
 def testAnObjectWithoutOverridesStillUsesTheSettingsValues():
     settings = _settings(**_MOTION_SETTINGS)
@@ -464,14 +466,23 @@ def testAnObjectWithoutOverridesStillUsesTheSettingsValues():
     assert "M204 S500" in lines
     assert f"G1 Z{_DRAW_Z:g}" in lines
 
-def testOverridesDoNotReachTravelMoves():
-    """A sweep still has to travel between its rows at the configured travel
-    height/speed - the override describes how the object draws, not how the machine
-    gets there."""
+def testOverridesDoNotReachTravelMoveSpeed():
+    """A sweep still has to travel between its rows at the configured travel speed -
+    the override describes how the object draws, not how the machine gets there."""
     settings = _settings(**_MOTION_SETTINGS)
-    obj = _line(overrides={"height": 7.0, "speed": 1234.0})
+    obj = _line(overrides={"height": 1.0, "speed": 1234.0})
     lines = _emit(lambda st, f: _addPath(st, settings, obj, f), _state(0, 0, 0))
     assert f"G1 Z{_TRAVEL_Z:g} F3000" in lines, "the pen lift keeps the travel speed"
+
+def testATallHeightOverrideRaisesTheTravelHeightToClearIt():
+    """A height override above the configured travel height would otherwise leave the
+    travel move dipping back down through the object's own draw height on its way
+    between rows - the travel height rises 1mm above it instead, still at travel
+    speed."""
+    settings = _settings(**_MOTION_SETTINGS)
+    obj = _line(overrides={"height": 7.0})
+    lines = _emit(lambda st, f: _addPath(st, settings, obj, f), _state(0, 0, 0))
+    assert "G1 Z8 F3000" in lines
 
 def testOverridesDoNotLeakIntoTheNextObject():
     settings = _settings(**_MOTION_SETTINGS)
@@ -479,15 +490,17 @@ def testOverridesDoNotLeakIntoTheNextObject():
         _addPath(st, settings, _line("a", {"height": 7.0}), f)
         _addPath(st, settings, _line("b"), f)
     lines = _emit(emitBoth)
-    assert lines.index("G1 Z7") < lines.index(f"G1 Z{_DRAW_Z:g}"), "b falls back to the settings height"
+    aHeight = next(i for i, l in enumerate(lines) if l.startswith("G1 Z7"))
+    bHeight = lines.index(f"G1 Z{_DRAW_Z:g}")
+    assert aHeight < bHeight, "b falls back to the settings height"
 
 def testAHeightOverrideSuppressesThePreviewRaise():
     """objectHeightChange's +0.001mm would otherwise land on half the rows of a sheet
     that is specifically sweeping height."""
     settings = _settings(**_MOTION_SETTINGS)
     lines = _emit(lambda st, f: _addPath(st, settings, _line(overrides={"height": 7.0}), f, True))
-    assert "G1 Z7" in lines
-    assert "G1 Z7.001" not in lines
+    assert any(l.startswith("G1 Z7") for l in lines)
+    assert not any(l.startswith("G1 Z7.001") for l in lines)
 
 def testAnUnknownOverrideIsReportedAndIgnored(capsys):
     settings = _settings(**_MOTION_SETTINGS)

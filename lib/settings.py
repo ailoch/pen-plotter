@@ -43,6 +43,11 @@ _LINE_TYPE_KEYS = {
     "_documentBounds": LineType._DOCUMENT_BOUNDS,
 }
 
+# heights.json keys that must not be set directly - initFromMachineJson derives them
+# from the draw heights instead, so the debug bounding boxes always sit clear of
+# whatever the drawing itself is doing
+_BOUNDS_KEYS = ("_segmentBounds", "_pathBounds", "_documentBounds")
+
 # which Settings fields load from the machine config vs. the slicer config -
 # every field on the dataclass must appear in exactly one of these (checked by
 # testMachineAndSlicerFieldsPartitionSettings in tests/test_settings.py), since
@@ -170,6 +175,12 @@ class Settings:
             print("Warning: penWidth is narrower than fillSpacing; the pen may not actually reach the edge of filled/stroked shapes.")
         if self.eAxisMultiplier <= 0:
             print("Warning: eAxisMultiplier <= 0 drops the E value from every draw move; the slicer will render the whole drawing as travel moves.")
+        travelHeight = self.heights.get(LineType.TRAVEL)
+        if travelHeight is not None:
+            tooTall = [lt for lt in _DRAW_LINE_TYPES if self.heights.get(lt, 0) > travelHeight]
+            if tooTall:
+                names = ", ".join(lt.name.lower() for lt in tooTall)
+                print(f"Warning: draw height(s) for {names} are greater than the travel height ({travelHeight:g}); the pen may drag while traveling between objects.")
 
     # shared JSON-loading body for both initFromMachineJson and initFromSlicerJson.
     # allowed is the set of Settings fields this side may load; otherAllowed is the
@@ -239,6 +250,9 @@ class Settings:
                         for k, v in setting.items():
                             if k == "draw":
                                 continue
+                            if settingName == "heights" and k in _BOUNDS_KEYS:
+                                print(f"Warning: {sectionName}.heights.{k} is computed automatically from stroke/infill/gapInfill heights; remove it from '{path}'.")
+                                continue
                             if k in _LINE_TYPE_KEYS:
                                 # speeds needs to be converted mm/min -> mm/s
                                 temp[_LINE_TYPE_KEYS[k]] = v*60 if settingName == "speeds" else v
@@ -293,6 +307,12 @@ class Settings:
         # the pipeline expects, now that both the offset and alignment are known
         self.safeZoneOffset = _alignedOffset(self.safeZoneAlignment, self.safeZoneOffset, self.safeZoneSize, self.plateSize)
         self.canvasOffset = _alignedOffset(self.canvasAlignment, self.canvasOffset, self.canvasSize, self.plateSize)
+
+        # the debug bounding boxes (showBoundingBoxes) must sit clear of every real draw height
+        maxDrawHeight = max(self.heights.get(LineType.STROKE, 0), self.heights.get(LineType.INFILL, 0), self.heights.get(LineType.GAP_INFILL, 0))
+        self.heights[LineType._SEGMENT_BOUNDS] = maxDrawHeight + .1
+        self.heights[LineType._PATH_BOUNDS] = maxDrawHeight + .2
+        self.heights[LineType._DOCUMENT_BOUNDS] = maxDrawHeight + .3
 
         self._validate()
 

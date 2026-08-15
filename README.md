@@ -26,4 +26,17 @@ off the one that works best.
 
 Run these in order - each one finds a setting the tests after it depend on.
 
+#### `height`
+
+Nothing else can be calibrated until the pen reliably touches the paper. Asks for a
+minimum, maximum, and step size in mm. Prints one short horizontal line per height,
+stacked with the lowest height at the bottom.
+
+Larger heights press the pen less firmly against the paper, so the lines should fade
+out as you look up the stack. The **highest height that still draws a solid, dark
+line** is the value to put in `motion.heights.draw` (or `.stroke`/`.infill`/etc. if you
+want to set them individually). The **lowest height that leaves no mark on the paper at
+all** is a floor for `motion.heights.travel` - travel should sit at or above that so
+the pen never drags while moving between shapes.
+
 *(More tests are added here as they're built.)*

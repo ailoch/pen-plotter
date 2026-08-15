@@ -39,6 +39,10 @@ def _drawSpeed(state: _DrawState, settings: Settings, lineType: LineType) -> flo
 def _drawAccel(state: _DrawState, settings: Settings, lineType: LineType) -> float | None:
     return state.overrides.get("accel", settings.accels.get(lineType))
 
+# the travel height must clear whatever height the arriving object draws at
+def _travelHeight(state: _DrawState, settings: Settings) -> float:
+    return max(settings.heights[LineType.TRAVEL], state.overrides.get("height", -math.inf) + 1)
+
 #region object to gcode
 
 def _moveRect(state: _DrawState, settings: Settings, bounds: tuple[float, float, float, float], file: TextIO, lineType: LineType | None = None):
@@ -236,7 +240,7 @@ def _penMove(state: _DrawState, settings: Settings, pos: complex, file: TextIO, 
             if state.lastLineType is not None:
                 threshold = min(threshold, settings.shortTravelThresholds[state.lastLineType])
             if distSquared >= threshold ** 2: # long travel
-                _addLine(state, settings, {"G": "1", "Z": settings.heights[LineType.TRAVEL]}, file, LineType.TRAVEL)
+                _addLine(state, settings, {"G": "1", "Z": _travelHeight(state, settings)}, file, LineType.TRAVEL)
                 _addLine(state, settings, {"G": "1", "X": str(pos.real), "Y": str(pos.imag)}, file)
                 _setDrawHeight(state, settings, file, lineType, raised)
             else: # short travel

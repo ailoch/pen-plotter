@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from typing import Callable
 
 from lib.geometry import Document, Line, Path, PathObject, Segment, Transform
+from lib.plot import _canvasBoundsNozzle
 from lib.settings import LineType, Settings
 
 # one row/block of a calibration sheet. height/speed/accel become PathObject.overrides
@@ -157,10 +158,43 @@ def _textPaths(text: str, origin: complex, capHeight: float) -> list[Path]:
 
 _LABEL_CAP_HEIGHT = 5.0 # mm - legible at a glance and in a photo without crowding the pattern next to it
 
+#region height test
+
+_HEIGHT_TEST_LINE_LENGTH = 10.0 # mm - base length of a line not on a longer tick
+_HEIGHT_TEST_LABEL_GAP = 3.0 # mm - between a line's right end and its label
+_HEIGHT_TEST_TICK_5 = 1.5 # mm - extra length every 5th line gets, like a ruler
+_HEIGHT_TEST_TICK_10 = 3.0 # mm - extra length every 10th line gets, instead of the 5th-line tick
+
+# one row per swept Z - a short horizontal line, stacked bottom-to-top.
+def _heightTest(settings: Settings) -> list[Pass]:
+    lo, hi, step = promptRamp("height", "mm")
+    pitch = 3.5 * settings.penWidth
+    passes = []
+    for i, z in enumerate(_rampValues(lo, hi, step)):
+        length = _HEIGHT_TEST_LINE_LENGTH
+        labelled = i % 10 == 0
+        if labelled:
+            length += _HEIGHT_TEST_TICK_10
+        elif i % 5 == 0:
+            length += _HEIGHT_TEST_TICK_5
+        y = i * pitch
+        # alternate draw direction row to row - the pen already sits at x=length after
+        # an even row, so an odd row starting there needs only the pitch's worth of
+        # travel instead of a full-width trip back to x=0
+        start, end = (0.0, length) if i % 2 == 0 else (length, 0.0)
+        line = Path([Line(complex(start, y), complex(end, y))], LineType.STROKE)
+        # baseline offset by half a cap height centers the label's own height on the
+        # line's y, instead of sitting entirely above it
+        labelOrigin = complex(length + _HEIGHT_TEST_LABEL_GAP, y - _LABEL_CAP_HEIGHT / 2) if labelled else None
+        passes.append(Pass(f"{z:g}", [line], labelOrigin, height=z))
+    return _centerPasses(passes, _canvasBoundsNozzle(settings))
+
+#endregion
+
 # registered calibration tests, keyed by the name settings.calibrationTest must match.
 # each entry prompts for its own parameters and returns the sheet's passes; populated
 # by the individual tests as they're added
-CALIBRATION_TESTS: dict[str, Callable[[Settings], list[Pass]]] = {}
+CALIBRATION_TESTS: dict[str, Callable[[Settings], list[Pass]]] = {"height": _heightTest}
 
 # whether settings.calibrationTest selects a calibration sheet instead of an SVG
 # drawing, warning if it names no registered test. This is where that value gets

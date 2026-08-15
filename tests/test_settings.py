@@ -46,9 +46,19 @@ def _loadFixture(name: str, side: str = "machine") -> Settings:
     return s
 
 
-def _assertDefaultSettings(s: Settings):
-    """Every field still matches a fresh Settings() - nothing from the file landed."""
-    assert asdict(s) == asdict(Settings())
+def _assertDefaultSettings(s: Settings, machineLoaded: bool = False):
+    """Every field still matches a fresh Settings() - nothing from the file landed.
+
+    machineLoaded is for a machine config that parses successfully even though
+    every individual setting inside it is rejected: initFromMachineJson still
+    derives the debug bounding-box heights from the (unchanged, default) draw
+    heights on any successful load, so those three keys are expected to differ."""
+    expected = Settings()
+    if machineLoaded:
+        expected.heights[LineType._SEGMENT_BOUNDS] = .1
+        expected.heights[LineType._PATH_BOUNDS] = .2
+        expected.heights[LineType._DOCUMENT_BOUNDS] = .3
+    assert asdict(s) == asdict(expected)
 
 
 def _warnings(capsys) -> list[str]:
@@ -178,6 +188,39 @@ def testPositiveEAxisMultiplierIsSilent(tmp_path, capsys):
     assert _warnings(capsys) == []
 
 
+def testDrawHeightAboveTravelHeightWarns(tmp_path, capsys):
+    """A draw height configured above the travel height would have the pen drag on
+    its way between objects - lib/plot.py's _travelHeight only rescues this
+    dynamically for a per-object height override, not a plain misconfigured default,
+    so it's worth a warning here too."""
+    s = _load(tmp_path, {"motion": {"heights": {"stroke": 5, "travel": 3}}})
+    assert s.heights[LineType.STROKE] == 5, "the value is still applied, only warned about"
+    warned = _warnings(capsys)
+    assert any("stroke" in w and "travel" in w for w in warned)
+
+
+def testDrawHeightAtOrBelowTravelHeightIsSilent(tmp_path, capsys):
+    _load(tmp_path, {"motion": {"heights": {"stroke": 3, "travel": 3}}})
+    assert _warnings(capsys) == []
+
+
+def testBoundsHeightsAreDerivedFromDrawHeights(tmp_path):
+    """The debug bounding boxes (showBoundingBoxes) always sit above every real
+    draw height, one tenth of a mm apart, rather than being configured by hand."""
+    s = _load(tmp_path, {"motion": {"heights": {"stroke": 1.0, "infill": 3.0, "gapInfill": 2.0, "travel": 10.0}}})
+    assert s.heights[LineType._SEGMENT_BOUNDS] == pytest.approx(3.1)
+    assert s.heights[LineType._PATH_BOUNDS] == pytest.approx(3.2)
+    assert s.heights[LineType._DOCUMENT_BOUNDS] == pytest.approx(3.3)
+
+
+def testBoundsHeightsInTheConfigAreRejected(tmp_path, capsys):
+    """These three are derived, not independently settable - a leftover value in
+    the JSON is reported and ignored rather than silently applied."""
+    s = _load(tmp_path, {"motion": {"heights": {"stroke": 1.0, "_segmentBounds": 99.0}}})
+    assert s.heights[LineType._SEGMENT_BOUNDS] == pytest.approx(1.1), "the JSON value must not win"
+    assert any("_segmentBounds" in w and "computed automatically" in w for w in _warnings(capsys))
+
+
 @pytest.mark.parametrize("fillSpacing", [0, -1], ids=["zero", "negative"])
 def testGapInfillWithoutInfillWarns(tmp_path, fillSpacing, capsys):
     """fillSpacing <= 0 disables fill entirely, which makes gap infill a no-op."""
@@ -229,7 +272,7 @@ def testWrongTypesAreAllRejected(fixture, side, names, capsys):
     """tests/configs/wrong-types-{machine,slicer}.json - every entry has a valid
     name and an invalid type, so nothing in it may be applied."""
     s = _loadFixture(fixture, side)
-    _assertDefaultSettings(s)
+    _assertDefaultSettings(s, machineLoaded=side == "machine")
 
     # and each one has to be *reported* - silently ignoring a setting the user
     # wrote is the failure mode this whole module is trying to avoid
@@ -248,7 +291,9 @@ def testUnknownSettingNameIsReportedNotFatal(tmp_path, capsys):
 def testUnknownMoveTypeIsReported(tmp_path, capsys):
     """An unrecognised key inside heights/speeds/... names itself in the warning."""
     s = _load(tmp_path, {"motion": {"heights": {"stroke": 1, "sprinkle": 2}}})
-    assert s.heights == {LineType.STROKE: 1}, "unknown move types must not land in the dict"
+    assert s.heights == {
+        LineType.STROKE: 1, LineType._SEGMENT_BOUNDS: 1.1, LineType._PATH_BOUNDS: 1.2, LineType._DOCUMENT_BOUNDS: 1.3,
+    }, "unknown move types must not land in the dict"
     assert any("sprinkle" in w for w in _warnings(capsys))
 
 
@@ -343,7 +388,9 @@ def testDrawKeyExpandsAndIsOverridable(tmp_path, name, drawValue, override, expe
     s = _load(tmp_path, {section: {name: combined}}, side)
     got = getattr(s, name)
 
-    assert set(got) == set(DRAW_ROLES), f"{name} should cover exactly the draw roles"
+    # heights also always carries the three derived bounding-box heights
+    expectedKeys = set(DRAW_ROLES) | {LineType._SEGMENT_BOUNDS, LineType._PATH_BOUNDS, LineType._DOCUMENT_BOUNDS} if name == "heights" else set(DRAW_ROLES)
+    assert set(got) == expectedKeys, f"{name} should cover exactly the draw roles"
     assert got[LineType.INFILL] == expected[1], "explicit role key did not override 'draw'"
     for role in DRAW_ROLES:
         if role != LineType.INFILL:
@@ -359,9 +406,13 @@ def testDrawKeyConvertsSpeedsToo(tmp_path):
 
 
 def testExplicitRolesWithoutDrawKey(tmp_path):
-    """Without "draw", only the named roles are present - no implicit fill-in."""
+    """Without "draw", only the named roles are present - no implicit fill-in
+    beyond the always-derived bounding-box heights."""
     s = _load(tmp_path, {"motion": {"heights": {"stroke": 1.0, "travel": 10.0}}})
-    assert s.heights == {LineType.STROKE: 1.0, LineType.TRAVEL: 10.0}
+    assert s.heights == {
+        LineType.STROKE: 1.0, LineType.TRAVEL: 10.0,
+        LineType._SEGMENT_BOUNDS: 1.1, LineType._PATH_BOUNDS: 1.2, LineType._DOCUMENT_BOUNDS: 1.3,
+    }
 
 
 def testDrawKeyDoesNotLeakIntoTravel(tmp_path):
