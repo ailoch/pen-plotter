@@ -400,6 +400,16 @@ def testRawGeometryIsNeverDrawn():
     """dropRawGeometry should have removed these already; _addPath skips them anyway."""
     assert _emit(lambda st, f: _addPath(st, _settings(), _polygon(4, LineType.RAW_GEOMETRY), f)) == []
 
+def testAddPathReturnsTrueWhenItDrawsSomething():
+    assert _addPath(_state(), _settings(), _polygon(4), io.StringIO()) is True
+
+def testAddPathReturnsFalseWhenNothingIsDrawn():
+    """createFile relies on this to decide whether an object earns a layerChangeMessage
+    comment - both a RAW_GEOMETRY-only object and one cropped out of the canvas
+    entirely must report back that they wrote nothing."""
+    assert _addPath(_state(), _settings(), _polygon(4, LineType.RAW_GEOMETRY), io.StringIO()) is False
+    assert _addPath(_state(), _settings(), _offscreenObject("gone"), io.StringIO()) is False
+
 @pytest.mark.parametrize("sides", [3, 4, 5, 6, 7])
 def testAClosedPathNeverEndsOnTheColourItStartedWith(sides):
     """style=="segment" cycles once per segment with no notion of closure, so a segment
@@ -829,6 +839,44 @@ def testOutOfBoundsObjectsAreReportedOnce(tmp_path, templates, capsys):
     assert printed.count("outside the canvas") == 1, "a single combined warning, not one per object/segment"
     assert printed.count("first") == 1, "an object with two out-of-bounds segments is still named only once"
     assert "second" in printed
+
+def _offscreenObject(objId: str) -> PathObject:
+    """An object entirely outside the default 100x100 canvas - crop mode drops all
+    of it, so it draws nothing at all."""
+    return PathObject(objId, [Path([Line(-500 - 500j, -400 - 400j)], LineType.STROKE)])
+
+def testEmptyObjectsGetNoLayerChangeComment(tmp_path, templates):
+    """An object cropped down to nothing must not get a layer-change comment of its
+    own - OrcaSlicer (unlike Bambu Studio) stops rendering every later object once
+    it sees one with no draw moves before the next."""
+    doc = Document()
+    doc.add(_offscreenObject("offscreen"))
+    doc.add(PathObject("visible", [Path([Line(30 + 30j, 60 + 60j)], LineType.STROKE)]))
+    out = tmp_path / "out.gcode"
+    settings = _fileSettings(templates, objectHeightChange=True, layerChangeMessage="; CHANGE_LAYER")
+    createFile(doc, settings, str(out))
+    assert out.read_text().count("; CHANGE_LAYER") == 1, "only the object that actually drew something gets one"
+
+def testConsecutiveEmptyObjectsProduceNoLayerChangeComments(tmp_path, templates):
+    doc = Document()
+    doc.add(_offscreenObject("a"))
+    doc.add(_offscreenObject("b"))
+    out = tmp_path / "out.gcode"
+    settings = _fileSettings(templates, objectHeightChange=True, layerChangeMessage="; CHANGE_LAYER")
+    createFile(doc, settings, str(out))
+    assert "CHANGE_LAYER" not in out.read_text()
+
+def testObjectHeightChangeParityStillCountsEmptyObjects(tmp_path, templates):
+    """The raised/not-raised alternation is based on an object's position in
+    geom.objects, not on how many objects actually drew something - simplest to
+    reason about, and untouched by skipping the empty ones' layer-change comment."""
+    doc = Document()
+    doc.add(_offscreenObject("empty")) # index 0 - "raised", but draws nothing
+    doc.add(PathObject("visible", [Path([Line(30 + 30j, 60 + 60j)], LineType.STROKE)])) # index 1 - not raised
+    out = tmp_path / "out.gcode"
+    settings = _fileSettings(templates, objectHeightChange=True)
+    createFile(doc, settings, str(out))
+    assert f"G1 Z{_DRAW_Z + .001:g}" not in out.read_text()
 
 
 #endregion

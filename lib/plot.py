@@ -327,9 +327,10 @@ def _splitAtBounds(segment: Line | Arc, bounds: tuple[float, float, float, float
         return [(segment, runs[0][2])]
     return [(segment.subsegment(t0, t1), isIn) for t0, t1, isIn in runs]
 
-def _addPath(state: _DrawState, settings: Settings, object: PathObject, file: TextIO, raised: bool = False, outOfBoundsNames: list[str] | None = None):
+def _addPath(state: _DrawState, settings: Settings, object: PathObject, file: TextIO, raised: bool = False, outOfBoundsNames: list[str] | None = None) -> bool:
     bounds = _canvasBoundsNozzle(settings)
     droppedThisObject = False
+    wroteAnything = False
     state.overrides = {k: v for k, v in object.overrides.items() if k in _MOTION_OVERRIDES}
     for name in object.overrides:
         if name not in _MOTION_OVERRIDES:
@@ -362,12 +363,14 @@ def _addPath(state: _DrawState, settings: Settings, object: PathObject, file: Te
             for piece, isIn in _splitAtBounds(segment, bounds):
                 if isIn:
                     _emitSegment(state, settings, piece, file, lineType, raised)
+                    wroteAnything = True
                 else:
                     if not droppedThisObject and outOfBoundsNames is not None:
                         outOfBoundsNames.append(object.id)
                         droppedThisObject = True
                     if settings.showOutOfBounds:
                         _emitSegment(state, settings, piece, file, LineType.INVALID, raised)
+                        wroteAnything = True
                     # else: crop mode - drop the out-of-bounds piece; the next surviving
                     # piece's leading _penMove(travel=True) naturally bridges the gap
     if settings.showBoundingBoxes:
@@ -375,7 +378,9 @@ def _addPath(state: _DrawState, settings: Settings, object: PathObject, file: Te
             for segment in path.segments:
                 _moveRect(state, settings, segment.bounds(), file, LineType._SEGMENT_BOUNDS)
         _moveRect(state, settings, object.bounds(), file, LineType._PATH_BOUNDS)
+        wroteAnything = True
     state.overrides = {} # the next object's own overrides replace these; anything drawn between objects uses the plain settings
+    return wroteAnything
 
 # endregion
 
@@ -588,10 +593,19 @@ def createFile(geom: Document, settings: Settings, fileOut: str) -> bool:
             objectCount = 0
             outOfBoundsNames: list[str] = []
             for object in geom.objects:
+                # the layer-change comment must precede the object's own gcode, but
+                # whether an object draws anything (a crop can reduce it to nothing)
+                # is only known after _addPath runs - write it speculatively and roll
+                # back to commentPos if nothing followed, rather than buffering the
+                # object's output just to decide whether to keep it
+                commentPos = destFile.tell()
                 if settings.objectHeightChange and settings.layerChangeMessage != "":
                     destFile.write(settings.layerChangeMessage + "\n\n")
-                _addPath(state, settings, object, destFile, objectCount % 2 == 0 and settings.objectHeightChange, outOfBoundsNames)
+                wrote = _addPath(state, settings, object, destFile, objectCount % 2 == 0 and settings.objectHeightChange, outOfBoundsNames)
                 objectCount += 1
+                if not wrote:
+                    destFile.seek(commentPos)
+                    destFile.truncate()
             if settings.showBoundingBoxes:
                 _moveRect(state, settings, geom.bounds(), destFile, LineType._DOCUMENT_BOUNDS)
 
