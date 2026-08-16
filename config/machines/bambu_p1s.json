@@ -25,19 +25,18 @@
         // line types: draw (controls all drawing line types, can be overridden), "stroke", "infill", "gapInfill", "travel"
         "heights": {"draw": 2.2, "travel": 2.7}, // mm
         "speeds": {"draw": 200, "travel": 500}, // mm/s
-        "accels": {"draw": 5000, "travel": 20000}, // mm/s^2
+        "accels": {"draw": 15000, "travel": 20000}, // mm/s^2
         "shortTravelThresholds": {"draw": 0.5, "infill": 1, "gapInfill": 1}, // travel moves below this distance (mm) will not lift the pen
         "loadDelay": 5, // wait this long for user to load pen
         "showLoadProgress": true, // if true, count the load delay down on the printer's progress display (100% -> 0%); if false, wait silently
-        "eAxisMultiplier": 0.5 // scales every emitted E value - reduces the raw commanded E rate the P1S planner throttles XY speed against (see CLAUDE.md's Hardware section for the full mechanism, including M221's role); side effect: the slicer's total-filament stat scales down by the same factor
+        "eAxisMultiplier": 1 // scales every emitted E value - reduces the raw commanded E rate the P1S planner throttles XY speed against; side effect: the slicer's total-filament stat scales down by the same factor
     },
 
     // controls what is drawn on paper
     "processing": {
         // penWidth is the real pen's ink width; fillSpacing is the distance between
-        // adjacent infill lines. Keep fillSpacing <= penWidth - real ink coverage varies
-        // with pen pressure, nib wear, and paper texture, so the interior tiling
-        // deliberately under-promises what one pass covers, ensuring that there is overlap between passes.
+        // adjacent infill lines. Keep fillSpacing <= penWidth. Real ink coverage varies
+        // with pen pressure, nib wear, and paper texture.
         "penWidth": 0.35, // expected ink width (mm); also positions the first fill/stroke ring so the pen's real outer edge lands exactly on the true boundary
         "fillSpacing": 0.3, // max distance (mm) between adjacent passes/loops before white paper shows through; 0 disables fill
         "generateGapInfill": true, // if true, adds extra strokes to fill small gaps in the infill
@@ -46,7 +45,7 @@
         "showOutOfBounds": false, // if true, segments outside the canvas are still drawn, tagged as the "invalid" line type for slicer-preview visibility; if false (default), they're cropped to the canvas edge instead
 
         "calibrationTest": "none", // "none" draws SVGs normally; set to a calibration test's name instead (listed in README.md) to generate that test's sheet
-        // options are "none", "height", "speed"
+        // options are "none", "height", "speed", "accel"
 
         "machinePrefixFile": "gcode_templates/machines/bambu_p1s_prefix.gcode",
         "machineSuffixFile": "gcode_templates/machines/bambu_p1s_suffix.gcode"

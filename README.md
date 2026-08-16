@@ -1,4 +1,8 @@
-<!--This file is intended for non-technical people, and should not discuss technical details-->
+<!--
+This file is intended for non-technical people, and should not discuss technical details
+Do not write things the user can see for themself.
+For example, do not write that the calibration tests have every 10th line longer. The user will be able to see that once the test is plotted.
+-->
 # Pen Plotter
 
 ## Calibration
@@ -48,5 +52,15 @@ full speed for most of the line rather than still accelerating out of the corner
 
 The **fastest line that is still solid and dark all the way along** is the value to
 put in `motion.speeds.draw`. A line that goes faint, or fades out, partway along was drawn faster than the pen could keep up with.
+
+#### `accel`
+
+Asks for a minimum, maximum, and step size in mm/s². A straight line can't reveal an
+acceleration problem - nothing on it ever changes direction - so each row is a zigzag
+instead: a few wide zigzags followed by several narrow ones.
+
+Too much acceleration makes lines wobbly. The **highest acceleration where every corner
+in both the wide and the narrow zigzag still comes to a clean point**, with no rounding
+or skipping, is the value to put in `motion.accels.draw`.
 
 *(More tests are added here as they're built.)*

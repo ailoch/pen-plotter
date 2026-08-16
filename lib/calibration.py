@@ -185,9 +185,9 @@ def _lineShapes(length: float) -> _RulerShapes:
 # the canvas, so the stack sits well inside the canvas regardless of whether the canvas
 # bounds themselves are accurate yet (that's the edge test's job)
 def _rulerSweep(quantity: str, unit: str, shapes: _RulerShapes, settings: Settings,
-                 makePass: Callable[[float, list[Path], complex | None], Pass]) -> list[Pass]:
+                 makePass: Callable[[float, list[Path], complex | None], Pass], extraRowHeight: float = 0) -> list[Pass]:
     lo, hi, step = promptRamp(quantity, unit)
-    pitch = _RULER_PITCH_FACTOR * settings.penWidth
+    pitch = _RULER_PITCH_FACTOR*settings.penWidth + extraRowHeight
     passes = []
     for i, v in enumerate(_rampValues(lo, hi, step)):
         labelled = i % 10 == 0
@@ -225,10 +225,64 @@ def _speedTest(settings: Settings) -> list[Pass]:
 
 #endregion
 
+#region accel test
+
+# a straight line can't show an acceleration problem - nothing on it ever changes
+# direction. Each row is a single continuous zigzag instead: a wide swing (general
+# overshoot) running straight into a narrow one (tight corners), so both scales of
+# cornering error show up in one stroke rather than costing a pen lift between them
+_ACCEL_WIDE_PITCH = 5.0 # mm - period of the wide zigzag
+_ACCEL_WIDE_AMPLITUDE = 4.0 # mm - peak-to-peak
+_ACCEL_WIDE_TEETH = 4
+_ACCEL_NARROW_PITCH = 2.0 # mm - period of the narrow zigzag
+_ACCEL_NARROW_AMPLITUDE = 1.5 # mm - peak-to-peak
+_ACCEL_NARROW_TEETH = 6
+_ACCEL_TICK_5_TEETH = 2 # extra narrow-pitch teeth every 5th row gets
+_ACCEL_TICK_10_TEETH = 4 # extra narrow-pitch teeth every 10th row gets, instead of the 5th-row tick
+
+# nTeeth points continuing a zigzag from start, alternating up/down starting with up
+# (or down, if startUp is False). Returns the new points (start itself excluded, so
+# callers can concatenate legs point-to-point) and whether the *next* leg should
+# start by going up - lets a leg of one amplitude hand off cleanly to another
+def _zigzagLeg(start: complex, startUp: bool, nTeeth: int, pitch: float, amplitude: float) -> tuple[list[complex], bool]:
+    points = []
+    x = start.real
+    up = startUp
+    for _ in range(nTeeth):
+        x += pitch / 2
+        points.append(complex(x, amplitude / 2 if up else -amplitude / 2))
+        up = not up
+    return points, up
+
+# the wide zigzag running straight into the narrow one, starting at the bottom (so
+# the first stroke is a clean rise, not a lift-off from mid-air) and ending at the
+# bottom or top depending on whether the tooth counts are even or odd. Ticked by
+# appending 1-2 more narrow-pitch teeth rather than a plain dash, so a tick still
+# tests acceleration instead of being a bare ruler mark
+def _zigzagShapes() -> _RulerShapes:
+    start = complex(0, -_ACCEL_WIDE_AMPLITUDE / 2)
+    wide, up = _zigzagLeg(start, True, _ACCEL_WIDE_TEETH, _ACCEL_WIDE_PITCH, _ACCEL_WIDE_AMPLITUDE)
+    narrow, up = _zigzagLeg(wide[-1], up, _ACCEL_NARROW_TEETH, _ACCEL_NARROW_PITCH, _ACCEL_NARROW_AMPLITUDE)
+    base = [start, *wide, *narrow]
+    def row(tickTeeth: int) -> list[Path]:
+        points = base
+        if tickTeeth:
+            tick, _ = _zigzagLeg(base[-1], up, tickTeeth, _ACCEL_NARROW_PITCH, _ACCEL_NARROW_AMPLITUDE)
+            points = base + tick
+        segments: list[Segment] = [Line(points[i], points[i + 1]) for i in range(len(points) - 1)]
+        return [Path(segments, LineType.STROKE)]
+    return row(0), row(_ACCEL_TICK_5_TEETH), row(_ACCEL_TICK_10_TEETH)
+
+def _accelTest(settings: Settings) -> list[Pass]:
+    return _rulerSweep("acceleration", "mm/s^2", _zigzagShapes(), settings,
+                        lambda a, geometry, labelOrigin: Pass(f"{a:g}", geometry, labelOrigin, accel=a), 2)
+
+#endregion
+
 # registered calibration tests, keyed by the name settings.calibrationTest must match.
 # each entry prompts for its own parameters and returns the sheet's passes; populated
 # by the individual tests as they're added
-CALIBRATION_TESTS: dict[str, Callable[[Settings], list[Pass]]] = {"height": _heightTest, "speed": _speedTest}
+CALIBRATION_TESTS: dict[str, Callable[[Settings], list[Pass]]] = {"height": _heightTest, "speed": _speedTest, "accel": _accelTest}
 
 # whether settings.calibrationTest selects a calibration sheet instead of an SVG
 # drawing, warning if it names no registered test. This is where that value gets

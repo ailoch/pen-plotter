@@ -7,10 +7,12 @@ import glob
 import pytest
 
 from lib.calibration import (
-    CALIBRATION_TESTS, Pass, _GLYPH_ADVANCE, _GLYPH_WIDTH, _GLYPHS, _LABEL_CAP_HEIGHT,
-    _RULER_TICK_5, _RULER_TICK_10, _centerPasses, _heightTest, _lineShapes, _rampValues,
-    _rulerSweep, _speedTest, _textPaths, _textWidth, _translatePaths, calibrationEnabled,
-    generateCalibration, promptNumber, promptRamp,
+    CALIBRATION_TESTS, Pass, _ACCEL_NARROW_TEETH, _ACCEL_TICK_5_TEETH,
+    _ACCEL_TICK_10_TEETH, _ACCEL_WIDE_AMPLITUDE, _ACCEL_WIDE_TEETH, _GLYPH_ADVANCE,
+    _GLYPH_WIDTH, _GLYPHS, _LABEL_CAP_HEIGHT, _RULER_TICK_5, _RULER_TICK_10,
+    _accelTest, _centerPasses, _heightTest, _lineShapes, _rampValues, _rulerSweep,
+    _speedTest, _textPaths, _textWidth, _translatePaths, _zigzagLeg, _zigzagShapes,
+    calibrationEnabled, generateCalibration, promptNumber, promptRamp,
 )
 from lib.geometry import Line, Path
 from lib.plot import _canvasBoundsNozzle, createFile
@@ -302,7 +304,7 @@ def testCalibrationEnabledListsRegisteredNamesInTheWarning(capsys, registeredTes
     assert registeredTest in capsys.readouterr().out
 
 def testRegistryHasOnlyTheShippedTests():
-    assert set(CALIBRATION_TESTS) == {"height", "speed"}
+    assert set(CALIBRATION_TESTS) == {"height", "speed", "accel"}
 
 #endregion
 
@@ -451,6 +453,79 @@ def testSpeedRoundTripsThroughGenerateCalibration(monkeypatch):
     assert [o.id for o in doc.objects] == ["10", "10 label", "20"]
     assert doc.objects[0].overrides == {"speed": 600.0}
     assert doc.objects[1].overrides == {"speed": 600.0}, "the label draws at the speed it names"
+
+#endregion
+
+
+#region accel test zigzag
+
+def testZigzagLegAlternatesUpAndDown():
+    points, endUp = _zigzagLeg(0j, True, 4, pitch=5.0, amplitude=4.0)
+    ys = [p.imag for p in points]
+    assert ys == pytest.approx([2.0, -2.0, 2.0, -2.0]), "amplitude is peak-to-peak"
+    assert endUp is True, "an even tooth count leaves the next leg's starting direction unchanged"
+
+def testZigzagLegStartingDownInvertsThePattern():
+    points, endUp = _zigzagLeg(0j, False, 3, pitch=5.0, amplitude=4.0)
+    ys = [p.imag for p in points]
+    assert ys == pytest.approx([-2.0, 2.0, -2.0])
+    assert endUp is True, "an odd tooth count flips the direction the next leg starts with"
+
+def testZigzagLegSpacesTeethAtHalfPitchFromTheGivenStart():
+    points, _ = _zigzagLeg(2 + 1j, True, 3, pitch=6.0, amplitude=4.0)
+    xs = [p.real for p in points]
+    assert xs == pytest.approx([5.0, 8.0, 11.0]), "each tooth is pitch/2 further along than the last"
+
+def testZigzagShapesStartsAtTheBottom():
+    """A straight line can't show an acceleration problem - nothing on it changes
+    direction - so each row is a zigzag; starting at the bottom makes the first
+    stroke a clean rise rather than a lift-off from mid-air."""
+    plain, _, _ = _zigzagShapes()
+    firstSegment = plain[0].segments[0]
+    assert isinstance(firstSegment, Line)
+    assert firstSegment.start == complex(0, -_ACCEL_WIDE_AMPLITUDE / 2)
+
+def testZigzagShapesJoinsWideAndNarrowIntoOneContinuousStroke():
+    """The row is a single stroke covering both a wide and a narrow zigzag, not two
+    separate shapes needing a pen lift between them."""
+    plain, _, _ = _zigzagShapes()
+    assert len(plain) == 1, "one continuous Path, pen never lifts mid-row"
+    segments = plain[0].segments
+    assert len(segments) == _ACCEL_WIDE_TEETH + _ACCEL_NARROW_TEETH, "one segment per tooth"
+    xmin, ymin, xmax, ymax = plain[0].bounds()
+    assert ymax - ymin == pytest.approx(_ACCEL_WIDE_AMPLITUDE), "the wide zigzag sets the overall height"
+
+def testZigzagShapesTicksAddSmallExtraZigzagsRatherThanADash():
+    """A tick's job is only to keep a row countable - but a plain trailing dash would
+    test nothing, so it's 1-2 more narrow-pitch teeth instead."""
+    plain, tick5, tick10 = _zigzagShapes()
+    assert len(tick5[0].segments) == len(plain[0].segments) + _ACCEL_TICK_5_TEETH
+    assert len(tick10[0].segments) == len(plain[0].segments) + _ACCEL_TICK_10_TEETH
+    plainMax, tick5Max, tick10Max = plain[0].bounds()[2], tick5[0].bounds()[2], tick10[0].bounds()[2]
+    assert plainMax < tick5Max < tick10Max, "each tick level reaches further right"
+
+#endregion
+
+
+#region accel test
+
+def testAccelTestUsesAccelAsTheOverride(monkeypatch):
+    _feedInputs(monkeypatch, "500", "1500", "500")
+    passes = _accelTest(Settings())
+    assert [p.accel for p in passes] == [500.0, 1000.0, 1500.0]
+    assert all(p.height is None and p.speed is None for p in passes)
+
+def testAccelTestLabelUsesTheMmPerSecondSquaredValue(monkeypatch):
+    _feedInputs(monkeypatch, "500", "1000", "500")
+    passes = _accelTest(Settings())
+    assert [p.label for p in passes] == ["500", "1000"]
+
+def testAccelRoundTripsThroughGenerateCalibration(monkeypatch):
+    _feedInputs(monkeypatch, "500", "1000", "500") # 2 passes, the first (index 0) gets a label
+    doc = generateCalibration(Settings(calibrationTest="accel"))
+    assert [o.id for o in doc.objects] == ["500", "500 label", "1000"]
+    assert doc.objects[0].overrides == {"accel": 500.0}
+    assert doc.objects[1].overrides == {"accel": 500.0}, "the label draws at the accel it names"
 
 #endregion
 
