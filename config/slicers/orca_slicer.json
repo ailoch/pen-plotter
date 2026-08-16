@@ -1,0 +1,15 @@
+{
+    "visualization": {
+        // leave empty to disable these
+        "styleChangeMessage": "; FEATURE: %s", // printed before a line whose feature (draw role) changes; %s will be replaced by the feature name
+        "layerChangeMessage": "; CHANGE_LAYER", // printed between objects when objectHeightChange is true
+
+        // which of these is used depends on machine.style ("role"/"instruction"/"segment")
+        "lineTypes": {"stroke": "Outer wall", "infill": "Internal solid infill", "gapInfill": "Gap infill", "invalid": "Invalid", "_segmentBounds": "Support transition", "_pathBounds": "Support interface", "_documentBounds": "Support"},
+        "instructionTypes": ["Sparse infill", "Support interface", "Overhang wall", "Gap infill"], // index 0 is G1, 1 is G2, 2 is G3, 3 is everything else
+        "segmentTypes": ["Top surface", "Outer wall", "Inner wall", "Support", "Bridge", "Internal solid infill"],
+
+        "slicerPrefixFile": "gcode_templates/slicers/orca_slicer_prefix.gcode",
+        "slicerSuffixFile": "gcode_templates/slicers/orca_slicer_suffix.gcode"
+    }
+}
