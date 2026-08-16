@@ -238,7 +238,7 @@ def _penMove(state: _DrawState, settings: Settings, pos: complex, file: TextIO, 
             # thresholds - use whichever is smaller
             threshold = settings.shortTravelThresholds[lineType or LineType.STROKE]
             if state.lastLineType is not None:
-                threshold = min(threshold, settings.shortTravelThresholds[state.lastLineType])
+                threshold = min(threshold, settings.shortTravelThresholds.get(state.lastLineType, float("inf")))
             if distSquared >= threshold ** 2: # long travel
                 _addLine(state, settings, {"G": "1", "Z": _travelHeight(state, settings)}, file, LineType.TRAVEL)
                 _addLine(state, settings, {"G": "1", "X": str(pos.real), "Y": str(pos.imag)}, file)
