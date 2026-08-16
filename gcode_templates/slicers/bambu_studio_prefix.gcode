@@ -10,12 +10,11 @@
 ; extruder_offset = {EXTRUDER_OFFSET}
 ; gcode_flavor = marlin
 ; host_type = octoprint
-; nozzle_diameter = 0.4
 ; print_settings_id = Plotter
 ; printable_area = {PRINTABLE_AREA}
 ; printable_height = {PRINTABLE_HEIGHT}
 ; printer_model = {PRINTER_MODEL}
-; printer_settings_id = P1S Plotter
+; printer_settings_id = Pen Plotter
 ; printhost_authorization_type = key
 ; printhost_ssl_ignore_revoke = 0
 ; =

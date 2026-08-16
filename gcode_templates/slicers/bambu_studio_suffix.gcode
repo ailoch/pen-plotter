@@ -1,6 +1,5 @@
 ; FEATURE: Custom
 ; MACHINE_END_GCODE_START
-; filament end gcode
 
 {MACHINE_SUFFIX}
 ; EXECUTABLE_BLOCK_END

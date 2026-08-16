@@ -1,6 +1,4 @@
 {
-    // controls how the gcode looks in bambu studio
-    // these settings do not affect the printed result
     "visualization": {
         // leave empty to disable these
         "styleChangeMessage": "; FEATURE: %s", // printed before a line whose feature (draw role) changes; %s will be replaced by the feature name
