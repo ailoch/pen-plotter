@@ -7,9 +7,9 @@ import glob
 import pytest
 
 from lib.calibration import (
-    CALIBRATION_TESTS, Pass, _GLYPH_ADVANCE, _GLYPH_WIDTH, _GLYPHS, _HEIGHT_TEST_LINE_LENGTH,
-    _HEIGHT_TEST_TICK_5, _HEIGHT_TEST_TICK_10, _LABEL_CAP_HEIGHT, _centerPasses, _heightTest,
-    _rampValues, _textPaths, _textWidth, _translatePaths, calibrationEnabled,
+    CALIBRATION_TESTS, Pass, _GLYPH_ADVANCE, _GLYPH_WIDTH, _GLYPHS, _LABEL_CAP_HEIGHT,
+    _RULER_TICK_5, _RULER_TICK_10, _centerPasses, _heightTest, _lineShapes, _rampValues,
+    _rulerSweep, _speedTest, _textPaths, _textWidth, _translatePaths, calibrationEnabled,
     generateCalibration, promptNumber, promptRamp,
 )
 from lib.geometry import Line, Path
@@ -214,9 +214,10 @@ def testGenerateCalibrationEmitsALabelObjectOnlyWhereLabelOriginIsSet(registered
     doc = generateCalibration(Settings(calibrationTest=registeredTest))
     assert [o.id for o in doc.objects] == ["1.00", "1.00 label"]
 
-def testGenerateCalibrationLabelTakesOnlyThePassHeight():
-    """The label must fade with its own row (height), but stay legible whatever
-    speed/accel the sheet is sweeping - so those two are deliberately not carried."""
+def testGenerateCalibrationLabelTakesTheSameOverridesAsItsRow():
+    """A label is drawn exactly like the row it names, so it degrades with that row -
+    whatever the sheet sweeps, a value whose label came out unreadable is one the
+    sheet is already telling you not to use."""
     CALIBRATION_TESTS["labelled"] = lambda s: [
         Pass("9", [Path([Line(0j, 5 + 0j)], LineType.STROKE)], labelOrigin=0j,
              height=3.0, speed=999.0, accel=888.0)
@@ -225,7 +226,19 @@ def testGenerateCalibrationLabelTakesOnlyThePassHeight():
         doc = generateCalibration(Settings(calibrationTest="labelled"))
     finally:
         del CALIBRATION_TESTS["labelled"]
-    assert doc.objects[1].overrides == {"height": 3.0}
+    assert doc.objects[1].overrides == {"height": 3.0, "speed": 999.0, "accel": 888.0}
+
+def testGenerateCalibrationLabelOverridesAreNotSharedWithItsRow():
+    """The two objects hold separate dicts - _addPath copies whichever it's given onto
+    _DrawState, so a shared one would let a later mutation reach both."""
+    CALIBRATION_TESTS["labelled"] = lambda s: [
+        Pass("9", [Path([Line(0j, 5 + 0j)], LineType.STROKE)], labelOrigin=0j, height=3.0)
+    ]
+    try:
+        doc = generateCalibration(Settings(calibrationTest="labelled"))
+    finally:
+        del CALIBRATION_TESTS["labelled"]
+    assert doc.objects[0].overrides is not doc.objects[1].overrides
 
 #endregion
 
@@ -289,32 +302,34 @@ def testCalibrationEnabledListsRegisteredNamesInTheWarning(capsys, registeredTes
     assert registeredTest in capsys.readouterr().out
 
 def testRegistryHasOnlyTheShippedTests():
-    assert set(CALIBRATION_TESTS) == {"height"}
+    assert set(CALIBRATION_TESTS) == {"height", "speed"}
 
 #endregion
 
 
-#region height test
+#region ruler sweep
 
-def testHeightTestBuildsOnePassPerRampValue(monkeypatch):
+def _identityPass(v: float, geometry: list[Path], labelOrigin: complex | None) -> Pass:
+    return Pass(f"{v:g}", geometry, labelOrigin)
+
+def testRulerSweepBuildsOnePassPerRampValue(monkeypatch):
     _feedInputs(monkeypatch, "1", "3", "1")
-    passes = _heightTest(Settings())
-    assert [p.height for p in passes] == [1.0, 2.0, 3.0]
+    passes = _rulerSweep("x", "mm", _lineShapes(10.0), Settings(), _identityPass)
     assert [p.label for p in passes] == ["1", "2", "3"]
 
-def testHeightTestStacksLowestValueAtTheBottom(monkeypatch):
+def testRulerSweepStacksAscendingValuesBottomToTop(monkeypatch):
     _feedInputs(monkeypatch, "1", "3", "1")
-    passes = _heightTest(Settings())
+    passes = _rulerSweep("x", "mm", _lineShapes(10.0), Settings(), _identityPass)
     ys = []
     for p in passes:
         segment = p.geometry[0].segments[0]
         assert isinstance(segment, Line)
         ys.append(segment.start.imag)
-    assert ys == sorted(ys), "ascending height sweep order already puts the lowest Z first"
+    assert ys == sorted(ys)
 
-def testHeightTestPitchScalesWithPenWidth(monkeypatch):
+def testRulerSweepPitchScalesWithPenWidth(monkeypatch):
     _feedInputs(monkeypatch, "1", "3", "1")
-    passes = _heightTest(Settings(penWidth=0.4))
+    passes = _rulerSweep("x", "mm", _lineShapes(10.0), Settings(penWidth=0.4), _identityPass)
     ys = []
     for p in passes:
         segment = p.geometry[0].segments[0]
@@ -322,47 +337,39 @@ def testHeightTestPitchScalesWithPenWidth(monkeypatch):
         ys.append(segment.start.imag)
     assert ys[1] - ys[0] == pytest.approx(3.5 * 0.4)
 
-def testHeightTestEveryTenthLineIsLabelledStartingFromTheFirst(monkeypatch):
+def testRulerSweepLabelsOnlyEveryTenthRowStartingFromTheFirst(monkeypatch):
     _feedInputs(monkeypatch, "1", "12", "1") # 12 passes: indices 0-11
-    passes = _heightTest(Settings())
+    passes = _rulerSweep("x", "mm", _lineShapes(10.0), Settings(), _identityPass)
     labelled = [i for i, p in enumerate(passes) if p.labelOrigin is not None]
     assert labelled == [0, 10]
 
-def testHeightTestLabelSitsToTheRightOfItsLine(monkeypatch):
+def testRulerSweepLabelSitsToTheRightAndIsVerticallyCentered(monkeypatch):
     _feedInputs(monkeypatch, "1", "2", "1") # first pass (index 0) is always labelled
-    passes = _heightTest(Settings())
+    passes = _rulerSweep("x", "mm", _lineShapes(10.0), Settings(), _identityPass)
     segment = passes[0].geometry[0].segments[0]
     assert isinstance(segment, Line)
     assert passes[0].labelOrigin is not None
     assert passes[0].labelOrigin.real > max(segment.start.real, segment.end.real)
-
-def testHeightTestLabelIsVerticallyCenteredOnItsLine(monkeypatch):
-    _feedInputs(monkeypatch, "1", "2", "1") # first pass (index 0) is always labelled
-    passes = _heightTest(Settings())
-    segment = passes[0].geometry[0].segments[0]
-    assert isinstance(segment, Line)
-    assert passes[0].labelOrigin is not None
     assert passes[0].labelOrigin.imag == pytest.approx(segment.start.imag - _LABEL_CAP_HEIGHT / 2)
 
-def testHeightTestEveryFifthAndTenthLineIsLonger(monkeypatch):
+def testRulerSweepEveryFifthAndTenthRowIsLonger(monkeypatch):
     _feedInputs(monkeypatch, "1", "10", "1") # 10 passes: indices 0-9
-    passes = _heightTest(Settings())
+    passes = _rulerSweep("x", "mm", _lineShapes(10.0), Settings(), _identityPass)
     lengths = []
     for p in passes:
         segment = p.geometry[0].segments[0]
         assert isinstance(segment, Line)
         lengths.append(abs(segment.end.real - segment.start.real))
-    plain = _HEIGHT_TEST_LINE_LENGTH
     assert lengths == pytest.approx([
-        plain + _HEIGHT_TEST_TICK_10, plain, plain, plain, plain,
-        plain + _HEIGHT_TEST_TICK_5, plain, plain, plain, plain,
+        10.0 + _RULER_TICK_10, 10.0, 10.0, 10.0, 10.0,
+        10.0 + _RULER_TICK_5, 10.0, 10.0, 10.0, 10.0,
     ])
 
-def testHeightTestAlternatesDrawDirectionEveryRow(monkeypatch):
+def testRulerSweepAlternatesDrawDirectionEveryRow(monkeypatch):
     """Rows draw in alternating directions so the pen only needs a pitch-sized hop
     between consecutive rows, not a full-width trip back to x=0."""
     _feedInputs(monkeypatch, "1", "4", "1")
-    passes = _heightTest(Settings())
+    passes = _rulerSweep("x", "mm", _lineShapes(10.0), Settings(), _identityPass)
     for i, p in enumerate(passes):
         segment = p.geometry[0].segments[0]
         assert isinstance(segment, Line)
@@ -371,10 +378,31 @@ def testHeightTestAlternatesDrawDirectionEveryRow(monkeypatch):
         else:
             assert segment.start.real > segment.end.real
 
-def testHeightTestStaysInsideTheCanvasBounds(monkeypatch):
+def testRulerSweepTilesArbitraryShapes(monkeypatch):
+    """The three shapes are supplied by the caller, so a sweep whose rows are more
+    than one line (a zigzag, say) tiles the same way."""
+    def zigzag(reach: float) -> list[Path]:
+        return [Path([Line(0j, complex(reach / 2, 2)), Line(complex(reach / 2, 2), complex(reach, 0))], LineType.STROKE)]
+    _feedInputs(monkeypatch, "1", "2", "1")
+    passes = _rulerSweep("x", "mm", (zigzag(8.0), zigzag(9.0), zigzag(10.0)), Settings(), _identityPass)
+    first = passes[0].geometry[0]
+    assert len(first.segments) == 2, "every segment of the shape is carried through"
+    xmin, _, xmax, _ = first.bounds()
+    assert xmax - xmin == pytest.approx(10.0), "row 0 gets the 10th-row shape"
+
+def testRulerSweepDoesNotMutateTheShapesItIsGiven(monkeypatch):
+    """The same shape is tiled up the whole stack, so each row has to get its own copy
+    - translating in place would walk the shared original up the sheet."""
+    shapes = _lineShapes(10.0)
+    before = [p.bounds() for p in shapes[0]]
+    _feedInputs(monkeypatch, "1", "5", "1")
+    _rulerSweep("x", "mm", shapes, Settings(), _identityPass)
+    assert [p.bounds() for p in shapes[0]] == before
+
+def testRulerSweepStaysInsideTheCanvasBounds(monkeypatch):
     _feedInputs(monkeypatch, "1", "10", "1")
     settings = Settings(canvasSize=100 + 100j)
-    passes = _heightTest(settings)
+    passes = _rulerSweep("x", "mm", _lineShapes(10.0), settings, _identityPass)
     xmin, ymin, xmax, ymax = _canvasBoundsNozzle(settings)
     for p in passes:
         for path in p.geometry:
@@ -382,11 +410,47 @@ def testHeightTestStaysInsideTheCanvasBounds(monkeypatch):
             assert xmin <= pxmin and pxmax <= xmax
             assert ymin <= pymin and pymax <= ymax
 
+#endregion
+
+
+#region height test
+
+def testHeightTestUsesHeightAsTheOverride(monkeypatch):
+    _feedInputs(monkeypatch, "1", "3", "1")
+    passes = _heightTest(Settings())
+    assert [p.height for p in passes] == [1.0, 2.0, 3.0]
+    assert all(p.speed is None and p.accel is None for p in passes)
+
 def testHeightRoundTripsThroughGenerateCalibration(monkeypatch):
     _feedInputs(monkeypatch, "1", "10", "1") # 10 passes, so only the first gets a label
     doc = generateCalibration(Settings(calibrationTest="height"))
     assert [o.id for o in doc.objects] == ["1", "1 label", "2", "3", "4", "5", "6", "7", "8", "9", "10"]
     assert doc.objects[0].overrides == {"height": 1.0}
+
+#endregion
+
+
+#region speed test
+
+def testSpeedTestConvertsMmPerSecondToMmPerMinuteForTheOverride(monkeypatch):
+    _feedInputs(monkeypatch, "10", "30", "10")
+    passes = _speedTest(Settings())
+    assert [p.speed for p in passes] == [600.0, 1200.0, 1800.0]
+    assert all(p.height is None and p.accel is None for p in passes)
+
+def testSpeedTestLabelUsesTheMmPerSecondValue(monkeypatch):
+    """The label reads the value the user actually typed (mm/s), not the mm/min the
+    override is stored as."""
+    _feedInputs(monkeypatch, "10", "20", "10")
+    passes = _speedTest(Settings())
+    assert [p.label for p in passes] == ["10", "20"]
+
+def testSpeedRoundTripsThroughGenerateCalibration(monkeypatch):
+    _feedInputs(monkeypatch, "10", "20", "10") # 2 passes, the first (index 0) gets a label
+    doc = generateCalibration(Settings(calibrationTest="speed"))
+    assert [o.id for o in doc.objects] == ["10", "10 label", "20"]
+    assert doc.objects[0].overrides == {"speed": 600.0}
+    assert doc.objects[1].overrides == {"speed": 600.0}, "the label draws at the speed it names"
 
 #endregion
 

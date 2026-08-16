@@ -1,3 +1,4 @@
+<!--This file is intended for non-technical people, and should not discuss technical details-->
 # Pen Plotter
 
 ## Calibration
@@ -38,5 +39,14 @@ line** is the value to put in `motion.heights.draw` (or `.stroke`/`.infill`/etc.
 want to set them individually). The **lowest height that leaves no mark on the paper at
 all** is a floor for `motion.heights.travel` - travel should sit at or above that so
 the pen never drags while moving between shapes.
+
+#### `speed`
+
+Asks for a minimum, maximum, and step size in mm/s. Prints one line per speed, laid
+out the same way as the `height` sheet but each row is 50mm long - long enough that the pen is moving at
+full speed for most of the line rather than still accelerating out of the corner.
+
+The **fastest line that is still solid and dark all the way along** is the value to
+put in `motion.speeds.draw`. A line that goes faint, or fades out, partway along was drawn faster than the pen could keep up with.
 
 *(More tests are added here as they're built.)*

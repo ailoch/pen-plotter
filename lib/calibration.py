@@ -1,4 +1,5 @@
 import math
+from copy import deepcopy
 from dataclasses import dataclass
 from typing import Callable
 
@@ -158,43 +159,76 @@ def _textPaths(text: str, origin: complex, capHeight: float) -> list[Path]:
 
 _LABEL_CAP_HEIGHT = 5.0 # mm - legible at a glance and in a photo without crowding the pattern next to it
 
+#region ruler sweep
+
+# shared by height/speed (and any later test whose rows are one plain horizontal
+# line): rows are stacked bottom-to-top at a tight, pen-relative pitch, ticked longer
+# every 5th row and longer still every 10th, ruler-style, with only the 10th carrying a value label.
+_RULER_PITCH_FACTOR = 3.5 # * penWidth, as tight a pitch as the pen can resolve
+_RULER_LABEL_GAP = 3.0 # mm - between a row's right edge and its label
+_RULER_TICK_5 = 1.5 # mm - extra length every 5th row gets
+_RULER_TICK_10 = 3.0 # mm - extra length every 10th row gets, instead of the 5th-row tick
+
+# the three row shapes a ruler sweep picks between: (plain, every 5th, every 10th).
+# Each is drawn in its own local space with the row's baseline on y=0.
+_RulerShapes = tuple[list[Path], list[Path], list[Path]]
+
+# the plain-horizontal-line shapes, ticked by the standard amounts - what a sweep whose
+# rows are just a single line of the given length wants
+def _lineShapes(length: float) -> _RulerShapes:
+    def line(extra: float) -> list[Path]:
+        return [Path([Line(0j, complex(length + extra, 0))], LineType.STROKE)]
+    return line(0), line(_RULER_TICK_5), line(_RULER_TICK_10)
+
+# builds one Pass per swept value via makePass(value, geometry, labelOrigin), tiling the
+# matching shape up the stack. Shapes are sized in fixed mm rather than as a fraction of
+# the canvas, so the stack sits well inside the canvas regardless of whether the canvas
+# bounds themselves are accurate yet (that's the edge test's job)
+def _rulerSweep(quantity: str, unit: str, shapes: _RulerShapes, settings: Settings,
+                 makePass: Callable[[float, list[Path], complex | None], Pass]) -> list[Pass]:
+    lo, hi, step = promptRamp(quantity, unit)
+    pitch = _RULER_PITCH_FACTOR * settings.penWidth
+    passes = []
+    for i, v in enumerate(_rampValues(lo, hi, step)):
+        labelled = i % 10 == 0
+        y = i * pitch
+        geometry = deepcopy(shapes[2] if labelled else shapes[1] if i % 5 == 0 else shapes[0])
+        _translatePaths(geometry, complex(0, y))
+        if i % 2:
+            # reversing leaves the row looking identical but drawn end-to-start, so
+            # the pen finishes where the next row begins - a pitch-sized hop instead
+            # of a full-width trip back
+            geometry.reverse()
+            for path in geometry:
+                path.reverse()
+        # placed off the row's own right edge, and its baseline dropped half a cap
+        # height so the label's height centers on the row instead of sitting above it
+        labelOrigin = complex(max(p.bounds()[2] for p in geometry) + _RULER_LABEL_GAP, y - _LABEL_CAP_HEIGHT / 2) if labelled else None
+        passes.append(makePass(v, geometry, labelOrigin))
+    return _centerPasses(passes, _canvasBoundsNozzle(settings))
+
+#endregion
+
 #region height test
 
-_HEIGHT_TEST_LINE_LENGTH = 10.0 # mm - base length of a line not on a longer tick
-_HEIGHT_TEST_LABEL_GAP = 3.0 # mm - between a line's right end and its label
-_HEIGHT_TEST_TICK_5 = 1.5 # mm - extra length every 5th line gets, like a ruler
-_HEIGHT_TEST_TICK_10 = 3.0 # mm - extra length every 10th line gets, instead of the 5th-line tick
-
-# one row per swept Z - a short horizontal line, stacked bottom-to-top.
 def _heightTest(settings: Settings) -> list[Pass]:
-    lo, hi, step = promptRamp("height", "mm")
-    pitch = 3.5 * settings.penWidth
-    passes = []
-    for i, z in enumerate(_rampValues(lo, hi, step)):
-        length = _HEIGHT_TEST_LINE_LENGTH
-        labelled = i % 10 == 0
-        if labelled:
-            length += _HEIGHT_TEST_TICK_10
-        elif i % 5 == 0:
-            length += _HEIGHT_TEST_TICK_5
-        y = i * pitch
-        # alternate draw direction row to row - the pen already sits at x=length after
-        # an even row, so an odd row starting there needs only the pitch's worth of
-        # travel instead of a full-width trip back to x=0
-        start, end = (0.0, length) if i % 2 == 0 else (length, 0.0)
-        line = Path([Line(complex(start, y), complex(end, y))], LineType.STROKE)
-        # baseline offset by half a cap height centers the label's own height on the
-        # line's y, instead of sitting entirely above it
-        labelOrigin = complex(length + _HEIGHT_TEST_LABEL_GAP, y - _LABEL_CAP_HEIGHT / 2) if labelled else None
-        passes.append(Pass(f"{z:g}", [line], labelOrigin, height=z))
-    return _centerPasses(passes, _canvasBoundsNozzle(settings))
+    return _rulerSweep("height", "mm", _lineShapes(10), settings,
+                        lambda z, geometry, labelOrigin: Pass(f"{z:g}", geometry, labelOrigin, height=z))
+
+#endregion
+
+#region speed test
+
+def _speedTest(settings: Settings) -> list[Pass]:
+    return _rulerSweep("speed", "mm/s", _lineShapes(50), settings,
+                        lambda v, geometry, labelOrigin: Pass(f"{v:g}", geometry, labelOrigin, speed=v * 60))
 
 #endregion
 
 # registered calibration tests, keyed by the name settings.calibrationTest must match.
 # each entry prompts for its own parameters and returns the sheet's passes; populated
 # by the individual tests as they're added
-CALIBRATION_TESTS: dict[str, Callable[[Settings], list[Pass]]] = {"height": _heightTest}
+CALIBRATION_TESTS: dict[str, Callable[[Settings], list[Pass]]] = {"height": _heightTest, "speed": _speedTest}
 
 # whether settings.calibrationTest selects a calibration sheet instead of an SVG
 # drawing, warning if it names no registered test. This is where that value gets
@@ -223,9 +257,6 @@ def generateCalibration(settings: Settings) -> Document:
             continue
         labelPaths = _textPaths(p.label, p.labelOrigin, _LABEL_CAP_HEIGHT)
         if labelPaths:
-            # the label takes the pass's height so it fades exactly when its own line
-            # does, but keeps the configured speed/accel so it stays legible whatever
-            # this sheet is sweeping
-            labelOverrides = {"height": p.height} if p.height is not None else {}
-            document.add(PathObject(p.label + " label", labelPaths, overrides=labelOverrides))
+            # a label is drawn exactly like the row it names so it degrades with that row
+            document.add(PathObject(p.label + " label", labelPaths, overrides=dict(overrides)))
     return document
