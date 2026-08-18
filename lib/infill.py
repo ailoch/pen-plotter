@@ -434,11 +434,35 @@ def _drawResidue(geometry: list[Path], residue: list, spacing: float, tolerance:
         except pyclipper.ClipperException:
             wide = True
         lines = None if wide else _medialAxisLines(outer, holes, spacing, tolerance)
-        if lines is None:
-            for loopPts in _fillGap(outer, holes, spacing, tolerance, objId):
-                _appendLoop(geometry, loopPts, LineType.GAP_INFILL, tolerance)
-        else:
+        if lines is not None:
             for poly in lines:
+                _appendLine(geometry, poly, LineType.GAP_INFILL, tolerance)
+            continue
+
+        before = len(geometry)
+        for loopPts in _fillGap(outer, holes, spacing, tolerance, objId):
+            _appendLoop(geometry, loopPts, LineType.GAP_INFILL, tolerance)
+
+        # a piece only just over `spacing` wide insets to a near-degenerate remnant, which
+        # survives along only part of the piece's length and can collapse entirely under
+        # tessellation - either way those loops can leave most of the piece uninked. So
+        # measure against the geometry that actually got appended rather than against what
+        # _fillGap returned, and skeletonise the shortfall: it's thinner than the piece
+        # was, which is the case the skeleton handles, so this stays one level deep
+        drawn = [_toClipperPath(p.tessellate(tolerance, allowArcs=False).vertices()) for p in geometry[before:]]
+        try:
+            missed = _difference(group, [_coverageBand([p for p in drawn if len(p) >= 2], spacing / 2)])
+            missed = _offsetPolys(missed, -eps) if missed else []
+            missed = _offsetPolys(missed, eps, asTree=True) if missed else None
+        except pyclipper.ClipperException as e:
+            print(f"Warning: pyclipper failed to measure the wide-gap remainder for object {objId!r} ({e}); skipping it.")
+            continue
+        if missed is None:
+            continue
+        for missedOuter, missedHoles in _polyTreeGroups(missed):
+            if abs(pyclipper.Area(missedOuter)) < minArea:
+                continue
+            for poly in _medialAxisLines(missedOuter, missedHoles, spacing, tolerance) or ():
                 _appendLine(geometry, poly, LineType.GAP_INFILL, tolerance)
 
 # fills one resolved fill region (clipper-int space) by tiling concentric rings inward

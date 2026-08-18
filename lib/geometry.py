@@ -729,7 +729,6 @@ class Path:
         firstSeg = min(int(t0 * n), n - 1)
         lastSeg = min(int(t1 * n), n - 1) if t1 < 1.0 else n - 1
         sampleTs: list[float] = []
-        allLines = True
         for segIdx in range(firstSeg, lastSeg + 1):
             segT0 = max(t0, segIdx / n)
             segT1 = min(t1, (segIdx + 1) / n)
@@ -740,7 +739,6 @@ class Path:
             if isinstance(self.segments[segIdx], Line):
                 sampleTs.append((segT0 + segT1) / 2)
             else:
-                allLines = False
                 for i in range(1, self._SAMPLES_PER_SEGMENT + 1):
                     sampleTs.append(segT0 + (segT1 - segT0) * (i / (self._SAMPLES_PER_SEGMENT + 1)))
 
@@ -788,29 +786,28 @@ class Path:
                 arc = Arc.fromThreePoints(p0, pm, p1, maxRadiusToChord=self._MAX_RADIUS_TO_CHORD)
             if arc is not None:
                 center, r = arc.center, abs(arc.u)
+                arcStart, arcEnd = arc.point(0.0), arc.point(1.0)
+                startAngle, sweep = arc.t0, abs(arc.sweep)
+                forward = arc.sweep >= 0
                 fits = True
-                if allLines:
-                    # a range of pure Lines has no interior curvature of its own (each
-                    # sample is already an exact data point, plus each segment's own
-                    # midpoint is sampled too), so there's no "out and back" risk within
-                    # any one sample gap: plain radial deviation is enough, and skips
-                    # the angle math below
-                    for p in samplePts:
-                        if abs(abs(p - center) - r) > tolerance:
-                            fits = False
-                            break
-                else:
-                    # distance to the finite swept arc, not radial deviation
-                    # from the underlying circle - catches a point that's
-                    # radially close but at a totally different, unswept angle
-                    for p in samplePts:
-                        rel = p - center
+                # deviation from the finite swept arc, not from the underlying circle - a
+                # sample can sit exactly on the circle at an angle the arc never sweeps
+                # through, which is what a dense polyline running out along the circle and
+                # doubling back inside one candidate range looks like: every point of it is
+                # radially perfect, so a radius-only check accepts a fit that just drops the
+                # excursion past p1. The angle is only worked out for samples that pass the
+                # radial check, since a candidate that fails does so on radius nearly always
+                for p in samplePts:
+                    rel = p - center
+                    dev = abs(abs(rel) - r)
+                    if dev <= tolerance:
                         theta = math.atan2(-rel.imag, rel.real)
-                        u = arc._thetaToT(theta)
-                        dev = min(abs(p - arc.point(0.0)), abs(p - arc.point(1.0))) if u is None else abs(abs(rel) - r)
-                        if dev > tolerance:
-                            fits = False
-                            break
+                        offset = (theta - startAngle) if forward else (startAngle - theta)
+                        if offset % math.tau > sweep:
+                            dev = min(abs(p - arcStart), abs(p - arcEnd))
+                    if dev > tolerance:
+                        fits = False
+                        break
                 if fits:
                     return arc
 

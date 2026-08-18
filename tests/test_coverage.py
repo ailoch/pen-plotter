@@ -2,22 +2,20 @@
 
 Method, per PathObject:
   target   = the region SVG would paint - the resolved fill region (per
-             fill-rule), shrunk by FILL_EDGE_MARGIN, plus the stroke band (raw
-             outline offset by strokeWidth/2 with the object's own join/cap/
-             miterlimit)
-  ink      = every drawn subpath's centerline swept by +/- fillSpacing/2
+             fill-rule) plus the stroke band (raw outline offset by
+             strokeWidth/2 with the object's own join/cap/miterlimit)
+  ink      = every drawn subpath's centerline swept by +/- penWidth/2
   uncovered = target - ink, opened at `tolerance` to discard the hairline
              seams that boolean ops on tessellated geometry always leave, then
-             eroded by GAP_HALF_WIDTH_FRACTION * fillSpacing - whatever survives
+             eroded by GAP_HALF_WIDTH_FRACTION * penWidth - whatever survives
              that is a gap too thick to blame on discretization
 
-FILL_EDGE_MARGIN excludes the outermost sliver of the fill region from target
-rather than from ink: generateInfill positions the fill's first ring penWidth/2
-- not the more conservative fillSpacing/2 this test sweeps ink by - back from
-that boundary, so the pen's real ink (assumed accurate to the configured
-penWidth) reaches it exactly. Shrinking target there means this test isn't
-faulting a boundary that's covered by construction, without loosening the
-fillSpacing/2 sweep everywhere else that actually catches real gaps.
+Ink is swept by penWidth, not by fillSpacing: penWidth is what the pen actually
+lays down, and it's the width the invariant is stated in - nothing wider than
+the pen may be left bare. Sweeping by the fillSpacing pitch instead understates
+every pass by (penWidth - fillSpacing)/2 per side, which is real ink on paper,
+and makes the measurement move whenever either value is retuned even though the
+drawing didn't change.
 
 Overcoverage is fine - a doubled pen pass is invisible on paper. Undercoverage
 is the bug, so only the one direction is asserted.
@@ -44,12 +42,12 @@ from lib.svgparse import loadSvg, parseSvg
 TESTS_DIR = os.path.dirname(os.path.abspath(__file__))
 DRAWN_ROLES = (LineType.STROKE, LineType.INFILL, LineType.GAP_INFILL)
 
-# A gap is only failed if it is thicker than this fraction of fillSpacing
-# (measured as half-width, so 0.25 means "a quarter of a ring pitch to each side").
+# A gap is only failed if it is thicker than this fraction of penWidth (measured as
+# half-width, so 0.25 means "a quarter of a pen width to each side").
 #
-# Some leftover is expected and benign. Adjacent rings meet with a seam of a few
-# tens of microns, and fillSpacing is deliberately set under the real pen width
-# precisely so the pen bridges those specks.
+# Some leftover is expected and benign: gap fill is held penWidth/2 back from the
+# outline so its centerline ink can't spill onto bare paper, which leaves the odd
+# sub-pen speck in an acute corner where no centerline can legally sit.
 #
 # So this is a KNOWN-ISSUES BASELINE, not a claim that such gaps are correct - it
 # sits just above the current worst case so the suite is green today and any new
@@ -206,11 +204,11 @@ def _area(paths) -> float:
     """
     return sum(pyclipper.Area(c) for c in paths) / (_SCALE ** 2)
 
-def _uncoveredArea(target, drawnPaths, spacing, tolerance):
+def _uncoveredArea(target, drawnPaths, penWidth, tolerance):
     """mm^2 of target no drawn centerline's ink band reaches, and how thick it is.
 
     Returns (area, pieceCount, thickArea) where thickArea counts only what survives
-    eroding by GAP_HALF_WIDTH_FRACTION * spacing - the known-issues baseline below
+    eroding by GAP_HALF_WIDTH_FRACTION * penWidth - the known-issues baseline below
     which a gap is blamed on discretization noise rather than a real failure.
     """
     if not target:
@@ -219,7 +217,7 @@ def _uncoveredArea(target, drawnPaths, spacing, tolerance):
         whole = _area(target)
         return whole, len(target), whole
 
-    leftover = _difference(target, [_coverageBand(drawnPaths, spacing / 2)])
+    leftover = _difference(target, [_coverageBand(drawnPaths, penWidth / 2)])
     if not leftover:
         return 0.0, 0, 0.0
 
@@ -235,7 +233,7 @@ def _uncoveredArea(target, drawnPaths, spacing, tolerance):
     # anything still standing after eroding by the budget is thicker than it.
     # this subsumes an area floor: a piece too small to matter is also too thin
     # to survive, so no separate minimum-area filter is needed
-    thick = _offsetPolys(leftover, -spacing * GAP_HALF_WIDTH_FRACTION)
+    thick = _offsetPolys(leftover, -penWidth * GAP_HALF_WIDTH_FRACTION)
     thickArea = _area(thick) if thick else 0.0
     # count only outer contours - a hole is part of its parent piece, not a piece
     pieceCount = sum(1 for c in leftover if pyclipper.Area(c) > 0)
@@ -245,7 +243,7 @@ def _uncoveredArea(target, drawnPaths, spacing, tolerance):
 def _measure(svgPath, settings):
     """Runs stroke+infill and returns [(objId, area, pieceCount, thickArea), ...]."""
     document = parseSvg(loadSvg(svgPath), settings, 1, 1)
-    spacing, tolerance = settings.fillSpacing, settings.tessellationTolerance
+    penWidth, tolerance = settings.penWidth, settings.tessellationTolerance
 
     # snapshot the raw centerlines before generation appends to obj.geometry
     rawByObj = {
@@ -256,20 +254,13 @@ def _measure(svgPath, settings):
     generateStroke(document, settings)
     generateInfill(document, settings)
 
-    # the sliver of the fill region nearest its own boundary that generateInfill's
-    # first ring is guaranteed to ink via the real pen (penWidth/2), beyond what the
-    # fillSpacing/2 sweep below would credit it for
-    fillEdgeMargin = max(0.0, settings.penWidth - spacing) / 2
-
     results = []
     for obj in document.objects:
         raw = rawByObj[id(obj)]
         if not raw:
             continue
-        fillRegion = _fillRegionOf(raw, obj.style, tolerance)
-        if fillRegion and fillEdgeMargin > 0:
-            fillRegion = _offsetPolys(fillRegion, -fillEdgeMargin)
-        target = _union(fillRegion, _strokeBandOf(raw, obj.style, tolerance))
+        target = _union(_fillRegionOf(raw, obj.style, tolerance),
+                        _strokeBandOf(raw, obj.style, tolerance))
         if not target:
             continue
         # gap fill is clipped to stay penWidth/2 inside the outer boundary, so a tip or
@@ -278,16 +269,16 @@ def _measure(svgPath, settings):
         # those, and is a no-op wherever the shape is wider than the pen. Guarded on the
         # object having an inkable core at all: a hairline stroke is narrower than the
         # pen everywhere but is still drawn (as its centerline pass), so it stays measured.
-        core = _offsetPolys(target, -settings.penWidth / 2)
+        core = _offsetPolys(target, -penWidth / 2)
         if core:
-            target = _offsetPolys(core, settings.penWidth / 2)
+            target = _offsetPolys(core, penWidth / 2)
         drawn = []
         for p in obj.geometry:
             if p.lineType in DRAWN_ROLES:
                 pts = _toClipperPath(p.tessellate(tolerance, allowArcs=False).vertices())
                 if len(pts) >= 2:
                     drawn.append(pts)
-        area, pieces, thick = _uncoveredArea(target, drawn, spacing, tolerance)
+        area, pieces, thick = _uncoveredArea(target, drawn, penWidth, tolerance)
         results.append((str(obj.id), area, pieces, thick))
     return results
 
@@ -308,7 +299,7 @@ def testNothingLeftUninked(svgPath, settings):
     failures = [(name, area, n, thick) for name, area, n, thick in results if thick > 0]
     detail = "\n".join(
         f"  {name}: {thick:.4f} mm^2 thicker than "
-        f"{settings.fillSpacing * GAP_HALF_WIDTH_FRACTION:.4f}mm half-width "
+        f"{settings.penWidth * GAP_HALF_WIDTH_FRACTION:.4f}mm half-width "
         f"({area:.4f} mm^2 uncovered total, {n} piece(s))"
         for name, area, n, thick in failures[:15]
     )

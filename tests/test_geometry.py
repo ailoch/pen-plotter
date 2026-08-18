@@ -704,6 +704,25 @@ def testTessellateWithoutArcsEmitsOnlyLines():
     assert all(isinstance(s, Line) for s in flat.segments)
 
 
+def testRefittingKeepsAnExcursionThatDoublesBackAlongItsOwnArc():
+    """A pyclipper offset that collapses a narrow neck comes back as a sliver whose two
+    sides lie on the same circle - it runs out to a tip and returns almost on top of
+    itself. Every one of those points is radially perfect against that circle, so a fit
+    judged on radius alone accepts an arc that stops short and silently discards the
+    whole excursion, leaving that part of the drawing uninked."""
+    r, tip = 40.0, math.radians(30)
+    out = [complex(r * math.cos(a * tip / 24), r * math.sin(a * tip / 24)) for a in range(25)]
+    # the return run sits 5um inside the outbound one - under the tolerance, so radially
+    # it is the same circle, yet the tip it turns at is 20mm from where the sliver starts
+    back = [p * ((r - 0.005) / r) for p in reversed(out)]
+    sliver = Path.fromPoints(out + back, closed=True)
+
+    refit = sliver.tessellate(0.012, fitLines=True)
+    reached = max(p.imag for p in refit.tessellate(0.012, allowArcs=False).vertices())
+    assert reached == pytest.approx(r * math.sin(tip), abs=0.05), \
+        "the fit stopped short of the tip - the excursion was dropped"
+
+
 #endregion
 
 #region PathObject

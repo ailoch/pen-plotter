@@ -9,7 +9,9 @@ import pytest
 pyclipper = pytest.importorskip("pyclipper", reason="infill needs pyclipper")
 
 from lib.geometry import Document, Path, PathObject, Style, Transform
-from lib.infill import generateInfill
+from lib.infill import (_MEDIAL_SAMPLE_DIVISOR, _SCALE, _coverageBand, _difference,
+                        _drawResidue, _medialAxisLines, _offsetPolys, _toClipperPath,
+                        generateInfill)
 from lib.settings import LineType
 
 DRAWN = (LineType.INFILL, LineType.GAP_INFILL)
@@ -104,3 +106,33 @@ def testThinResidueIsFilledWithMedialAxisStrokes(settings):
     gapFill = [p for p in obj.geometry if p.lineType == LineType.GAP_INFILL]
     assert gapFill, "an acute wedge should leave residue for the gap fill"
     assert not any(p.isClosed() for p in gapFill)
+
+
+def testATaperedResiduePieceIsInkedAlongItsWholeLength(settings):
+    """A piece counts as "wide" - loops rather than skeleton - as soon as it survives a
+    spacing/2 erosion ANYWHERE. Where it then tapers under that width the inset those
+    loops come from has already vanished, so the loops ink only the fat end and the rest
+    of the piece would be left bare unless the shortfall is skeletonised too."""
+    pytest.importorskip("scipy.spatial", reason="the medial axis needs scipy")
+    spacing, tolerance = settings.fillSpacing, settings.tessellationTolerance
+    length = 30.0
+    fat, thin = spacing * 1.2, spacing * 0.7
+    wedge = _toClipperPath([
+        complex(0, -fat / 2), complex(length, -thin / 2),
+        complex(length, thin / 2), complex(0, fat / 2),
+    ])
+
+    geometry: list = []
+    _drawResidue(geometry, [wedge], spacing, tolerance, "wedge")
+    assert geometry, "the wedge got no gap fill at all"
+
+    drawn = [_toClipperPath(p.tessellate(tolerance, allowArcs=False).vertices()) for p in geometry]
+    missed = _difference([wedge], [_coverageBand([d for d in drawn if len(d) >= 2], spacing / 2)])
+    # opened at tolerance, as everywhere else: a boolean on tessellated geometry always
+    # leaves hairline slivers along the shared boundary
+    missed = _offsetPolys(missed, -tolerance) if missed else []
+    missedArea = sum(abs(pyclipper.Area(c)) for c in missed) / _SCALE ** 2
+    wedgeArea = abs(pyclipper.Area(wedge)) / _SCALE ** 2
+    assert missedArea < wedgeArea * 0.05, (
+        f"{missedArea:.3f} of {wedgeArea:.3f} mm^2 left uninked - the taper went bare"
+    )
