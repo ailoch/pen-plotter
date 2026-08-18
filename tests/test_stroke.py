@@ -239,7 +239,7 @@ def testSharpTurnWithShortTailPicksTheTailsOwnDirection(settings):
     vertices = [0 + 0j, 0 + 11j, 0.5 + 11.3j]
     tailDirection = (vertices[2] - vertices[1]) / abs(vertices[2] - vertices[1])
 
-    planes = _buttEndPlanes(vertices)
+    planes = _buttEndPlanes(vertices, 1.0)
     assert len(planes) == 2
     farEnd, farTangent = planes[0]  # index len-1: the tail's own end
     assert farEnd == vertices[2]
@@ -267,6 +267,44 @@ def testSharpTurnWithShortTailDoesNotCrashOrOverink(settings):
     nearTip = [_toClipperPath([tip + 1 + 1j, tip + 1 - 1j, tip - 1 - 1j, tip - 1 + 1j])]
     ink = _inkPolys(obj, settings, roles=(LineType.STROKE,))
     assert _area(_intersect(ink, nearTip)) > 0.1, "no ink survived near the short tail's tip"
+
+
+def testAnAlmostClosedRingGetsNoCapSetback(settings):
+    """A circle drawn as an arc that stops a hair short of its own start is open, so it
+    has two butt caps - but they sit closer together than the stroke is wide, so
+    offsetting seals them into a continuous ring with no cap left anywhere on it. Their
+    planes by then face each other, and a cutter built from them reaches clear across the
+    shape rather than just past an end, cutting a spur into the middle of the drawing.
+    """
+    radius, gap = 5.0, 0.01
+    # left as an Arc for the pipeline to flatten: the coarse polygon tolerance allows is
+    # what puts the offsetter's near-coincident edges where the boolean goes wrong
+    arc = Arc(center=0j, u=complex(radius, 0), v=complex(0, -radius),
+              t0=0.0, sweep=math.tau - gap / radius)
+    path = Path([arc])
+    path.lineType = LineType.RAW_GEOMETRY
+    obj = _stroked(PathObject("ring", [path], Style(strokeColor=[0, 0, 0], strokeWidth=0.3,
+                                                    fillColor=None), Transform()), settings)
+
+    strokes = [p for p in obj.geometry if p.lineType == LineType.STROKE]
+    assert strokes, "the ring got no stroke passes"
+    for p in strokes:
+        drawn = p.tessellate(settings.tessellationTolerance, allowArcs=False).vertices()
+        innermost = min(abs(q) for q in drawn)
+        assert innermost > radius - 0.3, (
+            f"a pass dived to r={innermost:.3f} inside a ring at r={radius} - that's the "
+            f"cap cutter reaching across the shape"
+        )
+
+
+def testHairpinEndsKeepTheirCapPlanes():
+    """What marks the almost-closed ring above is its two end tangents opposing each
+    other, not just its two ends being close. A hairpin's caps sit within a stroke width
+    of each other too, but they head the same way and are both real caps still owed a
+    setback - so closeness alone must not be enough to drop them."""
+    hairpin = [0 + 0j, 10 + 0j, 10 + 0.2j, 0 + 0.2j]
+    assert abs(hairpin[-1] - hairpin[0]) < 2.0, "fixture no longer has its ends close"
+    assert len(_buttEndPlanes(hairpin, 2.0)) == 2
 
 
 #endregion

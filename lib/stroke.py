@@ -41,8 +41,8 @@ _EXTENDING_CAPS = ("round", "square")
 # the plane each butt cap of an open subpath sits on, as (endPoint, outwardUnitTangent).
 # The tangent comes from the flattened polyline's own end chord, which is what pyclipper
 # builds the cap itself from, so plane and cap stay parallel. Empty if the path is too
-# degenerate to have a direction.
-def _buttEndPlanes(vertices: list[complex]) -> list[tuple[complex, complex]]:
+# degenerate to have a direction, or if it is a loop that stops just short of closing.
+def _buttEndPlanes(vertices: list[complex], strokeWidth: float) -> list[tuple[complex, complex]]:
     planes = []
     for endIndex, step in ((len(vertices) - 1, -1), (0, 1)):
         end = vertices[endIndex]
@@ -52,6 +52,14 @@ def _buttEndPlanes(vertices: list[complex]) -> list[tuple[complex, complex]]:
         if not 0 <= i < len(vertices):
             return []
         planes.append((end, (end - vertices[i]) / abs(end - vertices[i])))
+
+    # a loop that comes back to within a stroke width of its own start has no cap left to
+    # set back from - offsetting seals the two into one continuous ring - and its planes
+    # face each other, so a cutter built from them reaches clear across the shape instead
+    # of just past an end.
+    a, b = planes[0][1], planes[1][1]
+    if abs(vertices[-1] - vertices[0]) <= strokeWidth and a.real * b.real + a.imag * b.imag < 0:
+        return []
     return planes
 
 # how far a cap cutter has to reach to cover everything outward of an end plane
@@ -294,7 +302,7 @@ def generateStroke(document: Document, settings: Settings):
             # (strokeWidth/2 - delta), which is where eroding the band would put it.
             endPlanes: list[tuple[complex, complex]] = []
             if deltas and not oneSided and not closed and len(clipperPath) >= 2 and style.linecap not in _EXTENDING_CAPS:
-                endPlanes = _buttEndPlanes(vertices)
+                endPlanes = _buttEndPlanes(vertices, style.strokeWidth)
 
             centerPass = None
             if centerPassNeeded and not oneSided:
