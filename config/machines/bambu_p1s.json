@@ -23,9 +23,9 @@
     // controls how the pen moves while drawing
     "motion": {
         // line types: draw (controls all drawing line types, can be overridden), "stroke", "infill", "gapInfill", "travel"
-        "heights": {"draw": 2.2, "travel": 2.7}, // mm
+        "heights": {"draw": 2, "travel": 3.2}, // mm
         "speeds": {"draw": 200, "travel": 500}, // mm/s
-        "accels": {"draw": 15000, "travel": 20000}, // mm/s^2
+        "accels": {"draw": 10000, "travel": 20000}, // mm/s^2
         "shortTravelThresholds": {"draw": 0.5, "infill": 1, "gapInfill": 1}, // travel moves below this distance (mm) will not lift the pen
         "loadDelay": 5, // wait this long for user to load pen
         "showLoadProgress": true, // if true, count the load delay down on the printer's progress display (100% -> 0%); if false, wait silently
@@ -35,17 +35,17 @@
     // controls what is drawn on paper
     "processing": {
         // penWidth is the real pen's ink width; fillSpacing is the distance between
-        // adjacent infill lines. Keep fillSpacing <= penWidth. Real ink coverage varies
+        // adjacent infill lines. Keep fillSpacing < penWidth. Real ink coverage varies
         // with pen pressure, nib wear, and paper texture.
-        "penWidth": 0.35, // expected ink width (mm); also positions the first fill/stroke ring so the pen's real outer edge lands exactly on the true boundary
-        "fillSpacing": 0.3, // max distance (mm) between adjacent passes/loops before white paper shows through; 0 disables fill
+        "penWidth": 0.32, // expected ink width (mm); also positions the first fill/stroke ring so the pen's real outer edge lands exactly on the true boundary
+        "fillSpacing": 0.27, // max distance (mm) between adjacent passes/loops before white paper shows through; 0 disables fill
         "generateGapInfill": true, // if true, adds extra strokes to fill small gaps in the infill
         "generateStroke": true, // if false, strokes draw as a single centerline pass regardless of strokeWidth (the pre-multi-pass behavior) instead of expanding to multiple passes
         "tessellationTolerance": 0.012, // max allowed deviation (mm) of gcode from the true curve
         "showOutOfBounds": false, // if true, segments outside the canvas are still drawn, tagged as the "invalid" line type for slicer-preview visibility; if false (default), they're cropped to the canvas edge instead
 
         "calibrationTest": "none", // "none" draws SVGs normally; set to a calibration test's name instead (listed in README.md) to generate that test's sheet
-        // options are "none", "height", "speed", "accel"
+        // options are "none", "height", "speed", "accel", "spacing"
 
         "machinePrefixFile": "gcode_templates/machines/bambu_p1s_prefix.gcode",
         "machineSuffixFile": "gcode_templates/machines/bambu_p1s_suffix.gcode"

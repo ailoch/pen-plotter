@@ -10,11 +10,14 @@ from lib.calibration import (
     CALIBRATION_TESTS, Pass, _ACCEL_NARROW_TEETH, _ACCEL_TICK_5_TEETH,
     _ACCEL_TICK_10_TEETH, _ACCEL_WIDE_AMPLITUDE, _ACCEL_WIDE_TEETH, _GLYPH_ADVANCE,
     _GLYPH_WIDTH, _GLYPHS, _LABEL_CAP_HEIGHT, _RULER_TICK_5, _RULER_TICK_10,
+    _SPACING_BLOCK_HEIGHT, _SPACING_REFERENCE_FACTOR, _SPACING_REFERENCE_HEIGHT,
     _accelTest, _centerPasses, _heightTest, _lineShapes, _rampValues, _rulerSweep,
-    _speedTest, _textPaths, _textWidth, _translatePaths, _zigzagLeg, _zigzagShapes,
-    calibrationEnabled, generateCalibration, promptNumber, promptRamp,
+    _spacingRectOutline, _spacingTest, _speedTest, _textPaths, _textWidth,
+    _translatePaths, _zigzagLeg, _zigzagShapes, calibrationEnabled, generateCalibration,
+    promptNumber, promptRamp,
 )
 from lib.geometry import Line, Path
+from lib.infill import generateInfill
 from lib.plot import _canvasBoundsNozzle, createFile
 from lib.settings import LineType, Settings
 
@@ -303,9 +306,6 @@ def testCalibrationEnabledListsRegisteredNamesInTheWarning(capsys, registeredTes
     calibrationEnabled(Settings(calibrationTest="not_a_real_test"))
     assert registeredTest in capsys.readouterr().out
 
-def testRegistryHasOnlyTheShippedTests():
-    assert set(CALIBRATION_TESTS) == {"height", "speed", "accel"}
-
 #endregion
 
 
@@ -526,6 +526,129 @@ def testAccelRoundTripsThroughGenerateCalibration(monkeypatch):
     assert [o.id for o in doc.objects] == ["500", "500 label", "1000"]
     assert doc.objects[0].overrides == {"accel": 500.0}
     assert doc.objects[1].overrides == {"accel": 500.0}, "the label draws at the accel it names"
+
+#endregion
+
+
+#region spacing test
+
+def _passBounds(p: Pass) -> tuple[float, float, float, float]:
+    xmin = min(path.bounds()[0] for path in p.geometry)
+    ymin = min(path.bounds()[1] for path in p.geometry)
+    xmax = max(path.bounds()[2] for path in p.geometry)
+    ymax = max(path.bounds()[3] for path in p.geometry)
+    return xmin, ymin, xmax, ymax
+
+def testSpacingRectOutlineIsAClosedFillableRectangleOfTheGivenSize():
+    """RAW_GEOMETRY (the default) and unfilled at this point - generateInfill (run once
+    over the whole sheet by whoever calls generateCalibration) is what actually fills
+    it, driven by the Pass's own fillSpacing override."""
+    outline = _spacingRectOutline(12.0, 5.0)
+    assert outline.lineType == LineType.RAW_GEOMETRY
+    assert outline.isClosed()
+    assert outline.isFillable()
+    xmin, ymin, xmax, ymax = outline.bounds()
+    assert (xmax - xmin, ymax - ymin) == pytest.approx((12.0, 5.0))
+
+def testSpacingTestOrdersSweptBlocksWidestToTightestThenTheReferenceLast(monkeypatch):
+    _feedInputs(monkeypatch, "0.2", "0.4", "0.1")
+    passes = _spacingTest(Settings())
+    assert [p.label for p in passes] == ["0.4", "0.3", "0.2", "0.1"]
+
+def testSpacingTestReferenceBarIsHalfTheTightestSweptSpacing(monkeypatch):
+    _feedInputs(monkeypatch, "0.2", "0.4", "0.1")
+    passes = _spacingTest(Settings())
+    assert float(passes[-1].label) == pytest.approx(0.2 * _SPACING_REFERENCE_FACTOR)
+
+def testSpacingTestSweptBlocksAreLaidLeftToRightWithoutOverlapping(monkeypatch):
+    _feedInputs(monkeypatch, "0.2", "0.4", "0.1")
+    passes = _spacingTest(Settings())
+    sweptBlocks = passes[:-1] # the reference bar sits above the row, not beside it
+    prevMax = None
+    for p in sweptBlocks:
+        xmin, _, xmax, _ = _passBounds(p)
+        if prevMax is not None:
+            assert xmin >= prevMax
+        prevMax = xmax
+
+def testSpacingTestReferenceBarSitsAboveTheSweptRow(monkeypatch):
+    _feedInputs(monkeypatch, "0.2", "0.4", "0.1")
+    passes = _spacingTest(Settings())
+    sweptTop = max(_passBounds(p)[3] for p in passes[:-1])
+    referenceBottom = _passBounds(passes[-1])[1]
+    assert referenceBottom > sweptTop
+
+def testSpacingTestReferenceBarSpansTheSweptBlocksCombinedWidth(monkeypatch):
+    _feedInputs(monkeypatch, "0.2", "0.4", "0.1")
+    passes = _spacingTest(Settings())
+    sweptXMin = min(_passBounds(p)[0] for p in passes[:-1])
+    sweptXMax = max(_passBounds(p)[2] for p in passes[:-1])
+    refXMin, _, refXMax, _ = _passBounds(passes[-1])
+    assert (refXMin, refXMax) == pytest.approx((sweptXMin, sweptXMax))
+
+def testSpacingTestReferenceBarIsShorterThanASweptBlock(monkeypatch):
+    _feedInputs(monkeypatch, "0.2", "0.4", "0.1")
+    passes = _spacingTest(Settings())
+    _, refYMin, _, refYMax = _passBounds(passes[-1])
+    assert refYMax - refYMin == pytest.approx(_SPACING_REFERENCE_HEIGHT)
+    assert _SPACING_REFERENCE_HEIGHT < _SPACING_BLOCK_HEIGHT
+
+def testSpacingTestLabelsOnlyEveryOtherSweptBlockStartingWithTheFirst(monkeypatch):
+    """Labelling every swept block crowds adjacent numbers together at a tight step."""
+    _feedInputs(monkeypatch, "0.2", "0.6", "0.1")
+    passes = _spacingTest(Settings())
+    labelled = [i for i, p in enumerate(passes) if p.labelOrigin is not None]
+    assert labelled == [0, 2, 4]
+
+def testSpacingTestLabelsSitBelowEachLabelledBlock(monkeypatch):
+    _feedInputs(monkeypatch, "0.2", "0.4", "0.1")
+    passes = _spacingTest(Settings())
+    for p in passes:
+        if p.labelOrigin is None:
+            continue
+        blockBottom = _passBounds(p)[1]
+        assert p.labelOrigin.imag < blockBottom
+
+def testSpacingTestSetsFillSpacingButNoMotionOverrides(monkeypatch):
+    """spacing calibrates penWidth/fillSpacing by eye, not a per-object motion
+    setting, so it draws entirely at the config's own height/speed/accel."""
+    _feedInputs(monkeypatch, "0.2", "0.4", "0.1")
+    passes = _spacingTest(Settings())
+    assert all(p.height is None and p.speed is None and p.accel is None for p in passes)
+    assert all(p.fillSpacing is not None for p in passes)
+
+def testSpacingRoundTripsThroughGenerateCalibration(monkeypatch):
+    _feedInputs(monkeypatch, "0.2", "0.3", "0.1") # 2 swept (0.3, 0.2) + 1 reference (0.1)
+    doc = generateCalibration(Settings(calibrationTest="spacing"))
+    assert [o.id for o in doc.objects] == ["0.3", "0.3 label", "0.2", "0.1"], \
+        "the middle block (index 1, 0.2) isn't labelled; the reference (0.1) never is"
+    assert doc.objects[0].overrides["fillSpacing"] == pytest.approx(0.3)
+    assert doc.objects[2].overrides["fillSpacing"] == pytest.approx(0.2)
+    assert doc.objects[3].overrides["fillSpacing"] == pytest.approx(0.1)
+    assert doc.objects[1].overrides["fillSpacing"] == pytest.approx(0.3), \
+        "a label shares its row's overrides, including fillSpacing - it just never gets consumed, since a label is never fillable"
+
+def testSpacingSheetFillsEachBlockAtItsOwnSpacingThroughOneGenerateInfillCall(monkeypatch):
+    """This is the whole point of the fillSpacing override: _Process.py runs the
+    calibration document through one ordinary generateInfill call, same as a real
+    drawing, and each block still ends up filled at its own swept spacing."""
+    pytest.importorskip("pyclipper", reason="infill needs pyclipper")
+    _feedInputs(monkeypatch, "0.2", "0.4", "0.1")
+    settings = Settings(penWidth=0.3, tessellationTolerance=0.01, calibrationTest="spacing")
+    doc = generateCalibration(settings)
+    generateInfill(doc, settings)
+
+    blocks = [o for o in doc.objects if "label" not in o.id]
+    for block in blocks:
+        assert any(p.lineType in (LineType.INFILL, LineType.GAP_INFILL) for p in block.geometry), \
+            f"block {block.id!r} should have been filled"
+        assert "fillSpacing" not in block.overrides, "generateInfill must consume the override"
+
+    # the tightest block (the reference bar, 0.2 * 0.5 = 0.1) should draw more ink
+    # than the widest swept block (0.4)
+    def ink(obj):
+        return sum(p.length() for p in obj.geometry if p.lineType in (LineType.INFILL, LineType.GAP_INFILL))
+    assert ink(blocks[-1]) > ink(blocks[0])
 
 #endregion
 

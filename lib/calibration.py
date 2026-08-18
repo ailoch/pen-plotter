@@ -7,16 +7,17 @@ from lib.geometry import Document, Line, Path, PathObject, Segment, Transform
 from lib.plot import _canvasBoundsNozzle
 from lib.settings import LineType, Settings
 
-# one row/block of a calibration sheet. height/speed/accel become PathObject.overrides
-# on the emitted object - left None, that setting is simply not overridden
+# one row/block of a calibration sheet. height/speed/accel/fillSpacing become
+# PathObject.overrides on the emitted object - left None, that setting is simply not overridden
 @dataclass
 class Pass:
     label: str # the swept value's display text; also this pass's gcode object id
-    geometry: list[Path] # the test pattern itself, nozzle space, lineType already STROKE
+    geometry: list[Path] # the test pattern itself, nozzle space
     labelOrigin: complex | None = None # baseline-left corner of the drawn label; None skips it
     height: float | None = None # mm
     speed: float | None = None # mm/min
     accel: float | None = None # mm/s^2
+    fillSpacing: float | None = None # mm - overrides settings.fillSpacing for generateInfill
 
 #region prompts
 
@@ -279,10 +280,62 @@ def _accelTest(settings: Settings) -> list[Pass]:
 
 #endregion
 
+#region spacing test
+
+# doesn't use _rulerSweep - it lays blocks out left-to-right with labels below, not
+# rows stacked bottom-to-top with a label to the right
+_SPACING_BLOCK_WIDTH = 8.0 # mm
+_SPACING_BLOCK_HEIGHT = 25.0 # mm
+_SPACING_BLOCK_GAP = 4.0 # mm - horizontal gap between blocks
+_SPACING_LABEL_GAP = 3.0 # mm - between a block's bottom edge and its label
+_SPACING_REFERENCE_HEIGHT = 6.0 # mm - short: only its width, not its height, matters for comparison
+_SPACING_REFERENCE_GAP = 2.0 # mm - vertical gap between the swept blocks' top edge and the reference bar above them
+_SPACING_REFERENCE_FACTOR = 0.5 # the reference bar's spacing, as a fraction of the tightest swept spacing
+
+# a plain width x height rectangle outline
+def _spacingRectOutline(width: float, height: float) -> Path:
+    return Path([
+        Line(0j, complex(width, 0)),
+        Line(complex(width, 0), complex(width, height)),
+        Line(complex(width, height), complex(0, height)),
+        Line(complex(0, height), 0j),
+    ])
+
+# the swept blocks laid left-to-right, widest spacing first and tightening toward the
+# right, every other one labelled below (starting with the first - labelling every one
+# crowds adjacent numbers together at a tight step). One reference bar - deliberately
+# tighter than every swept value, short, and spanning their combined width - sits just
+# above the row (unlabelled: it's a reference to compare against, not a value to read
+# off), so there's always an unambiguous "this is solid" close at hand
+def _spacingTest(settings: Settings) -> list[Pass]:
+    lo, hi, step = promptRamp("spacing", "mm")
+    values = list(reversed(_rampValues(lo, hi, step))) # widest to tightest
+    passes = []
+    x = 0.0
+    for i, spacing in enumerate(values):
+        block = [_spacingRectOutline(_SPACING_BLOCK_WIDTH, _SPACING_BLOCK_HEIGHT)]
+        _translatePaths(block, complex(x, 0))
+        label = f"{spacing:g}"
+        labelOrigin = complex(x + _SPACING_BLOCK_WIDTH / 2 - _textWidth(label, _LABEL_CAP_HEIGHT) / 2,
+                               -_SPACING_LABEL_GAP - _LABEL_CAP_HEIGHT) if i % 2 == 0 else None
+        passes.append(Pass(label, block, labelOrigin, fillSpacing=spacing))
+        x += _SPACING_BLOCK_WIDTH + _SPACING_BLOCK_GAP
+    totalWidth = x - _SPACING_BLOCK_GAP # drop the trailing gap after the last block
+
+    refBottom = _SPACING_BLOCK_HEIGHT + _SPACING_REFERENCE_GAP
+    refBlock = [_spacingRectOutline(totalWidth, _SPACING_REFERENCE_HEIGHT)]
+    _translatePaths(refBlock, complex(0, refBottom))
+    refSpacing = lo * _SPACING_REFERENCE_FACTOR
+    passes.append(Pass(f"{refSpacing:g}", refBlock, fillSpacing=refSpacing))
+
+    return _centerPasses(passes, _canvasBoundsNozzle(settings))
+
+#endregion
+
 # registered calibration tests, keyed by the name settings.calibrationTest must match.
 # each entry prompts for its own parameters and returns the sheet's passes; populated
 # by the individual tests as they're added
-CALIBRATION_TESTS: dict[str, Callable[[Settings], list[Pass]]] = {"height": _heightTest, "speed": _speedTest, "accel": _accelTest}
+CALIBRATION_TESTS: dict[str, Callable[[Settings], list[Pass]]] = {"height": _heightTest, "speed": _speedTest, "accel": _accelTest, "spacing": _spacingTest}
 
 # whether settings.calibrationTest selects a calibration sheet instead of an SVG
 # drawing, warning if it names no registered test. This is where that value gets
@@ -299,12 +352,11 @@ def calibrationEnabled(settings: Settings) -> bool:
     return True
 
 # builds the sheet settings.calibrationTest selects, prompting for that test's own
-# parameters. Its geometry is already final, so unlike a parsed SVG it goes straight
-# to gcode without the stroke/infill stages
+# parameters.
 def generateCalibration(settings: Settings) -> Document:
     document = Document()
     for p in CALIBRATION_TESTS[settings.calibrationTest](settings):
-        overrides = {k: v for k, v in (("height", p.height), ("speed", p.speed), ("accel", p.accel)) if v is not None}
+        overrides = {k: v for k, v in (("height", p.height), ("speed", p.speed), ("accel", p.accel), ("fillSpacing", p.fillSpacing)) if v is not None}
         document.add(PathObject(p.label, p.geometry, overrides=overrides))
 
         if p.labelOrigin is None:

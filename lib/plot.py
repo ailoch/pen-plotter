@@ -29,6 +29,9 @@ class _DrawState:
 # still lifts and travels at the configured travel height/speed between them
 _MOTION_OVERRIDES = ("height", "speed", "accel")
 
+# overrides that are legitimate to see here even though this file never reads them
+_ALL_OVERRIDES = _MOTION_OVERRIDES + ("fillSpacing",)
+
 # the draw height/speed/accel for lineType, letting the current object's overrides win
 def _drawHeight(state: _DrawState, settings: Settings, lineType: LineType | None) -> float:
     return state.overrides.get("height", settings.heights[lineType or LineType.STROKE])
@@ -333,7 +336,7 @@ def _addPath(state: _DrawState, settings: Settings, object: PathObject, file: Te
     wroteAnything = False
     state.overrides = {k: v for k, v in object.overrides.items() if k in _MOTION_OVERRIDES}
     for name in object.overrides:
-        if name not in _MOTION_OVERRIDES:
+        if name not in _ALL_OVERRIDES:
             print(f"Warning: unknown motion override '{name}' on object '{object.id}'; ignoring it.")
     for path in object.geometry:
         # RAW_GEOMETRY is a source for stroke/fill generation, never drawn itself

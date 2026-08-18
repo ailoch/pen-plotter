@@ -63,4 +63,15 @@ Too much acceleration makes lines wobbly. The **highest acceleration where every
 in both the wide and the narrow zigzag still comes to a clean point**, with no rounding
 or skipping, is the value to put in `motion.accels.draw`.
 
+#### `spacing`
+
+Asks for a minimum, maximum, and step size in mm, and finds **two** settings at once.
+Prints a small filled rectangle for each spacing, widest spacing on the left and tightening toward the right, with every other block labelled underneath. Just above that whole row, an unlabelled **reference bar** spans its full width, drawn at an obviously too-tight spacing, so you always have something unambiguously solid nearby to compare the other blocks against.
+
+The **widest block with no white showing through it** (compare it to the reference bar if
+it's a close call) gives `processing.penWidth` directly - that's the real width of the
+pen's ink. For `processing.fillSpacing`, go one or two blocks tighter than that: solid at
+a glance and in raking light, with a little margin for pen pressure, nib wear, and paper
+texture.
+
 *(More tests are added here as they're built.)*

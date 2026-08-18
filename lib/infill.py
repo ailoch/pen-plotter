@@ -563,10 +563,8 @@ def _resolveFillRegion(obj, tolerance: float) -> list:
 # but an open fillable subpath is still closed in place so the drawn outline matches
 # the shape SVG would have filled.
 def generateInfill(document: Document, settings: Settings):
-    spacing = settings.fillSpacing
     tolerance = settings.tessellationTolerance
-    if spacing > 0 and pyclipper is None:
-        print("Warning: pyclipper is not installed (pip install pyclipper); skipping infill generation.")
+    warnedMissingPyclipper = False
 
     for obj in document.objects:
         if obj.style.fillColor is None:
@@ -586,7 +584,13 @@ def generateInfill(document: Document, settings: Settings):
             if not p.isClosed():
                 p.segments.append(Line(p.end(), p.start()))
 
-        if spacing <= 0 or pyclipper is None:
+        spacing = obj.overrides.pop("fillSpacing", settings.fillSpacing)
+        if spacing <= 0:
+            continue
+        if pyclipper is None: # checked in object loop because object fill spacings can be overridden
+            if not warnedMissingPyclipper:
+                print("Warning: pyclipper is not installed (pip install pyclipper); skipping infill generation.")
+                warnedMissingPyclipper = True
             continue
 
         try:

@@ -75,8 +75,8 @@ def run() -> RunResult:
         # the test's own parameter questions come first, same as promptRescale below
         sheet = generateCalibration(settings)
         startTime, profiler = startTiming()
-        # already final drawable geometry: no stroke/infill to generate, and no
-        # routing either, since a sweep is only readable in the order it was built
+        # stroke generation is not needed for any test
+        generateInfill(sheet, settings)
         document = sheet
     elif document is None:
         try:

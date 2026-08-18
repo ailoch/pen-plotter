@@ -70,6 +70,11 @@ def _wedge() -> PathObject:
                       Style(fillColor=[0, 0, 0], strokeColor=None), Transform())
 
 
+def _square(id: str, size: float = 20.0, overrides: dict | None = None) -> PathObject:
+    outline = Path.fromPoints([0j, complex(size, 0), complex(size, size), complex(0, size)], closed=True)
+    return PathObject(id, [outline], Style(fillColor=[0, 0, 0], strokeColor=None), Transform(), overrides=overrides or {})
+
+
 #endregion
 
 
@@ -173,3 +178,47 @@ def testALongStraightSliverSkeletonisesQuickly(settings):
         f"same point count - the collinear-site blowup is back"
     )
 
+
+#region fillSpacing override
+
+
+def testFillSpacingOverrideReplacesSettingsFillSpacingForThatObject(settings):
+    """A per-object override lets one shape preview a spacing the rest of the document
+    isn't using - the whole reason the spacing calibration sheet can fill several
+    blocks, each at a different pitch, through one ordinary generateInfill call."""
+    tight = _square("tight", overrides={"fillSpacing": settings.fillSpacing / 3})
+    plain = _square("plain")
+    document = Document()
+    document.add(tight)
+    document.add(plain)
+    generateInfill(document, settings)
+
+    tightInk = sum(p.length() for p in tight.geometry if p.lineType in DRAWN)
+    plainInk = sum(p.length() for p in plain.geometry if p.lineType in DRAWN)
+    assert tightInk > plainInk, "the tighter override should draw denser rings"
+
+
+def testFillSpacingOverrideIsConsumedAndRemovedFromOverrides(settings):
+    """Left behind, it would sit unrecognized in the object's overrides and trip
+    _addPath's unknown-override warning at draw time - fillSpacing only means anything
+    during infill generation."""
+    obj = _square("sq", overrides={"fillSpacing": settings.fillSpacing / 2})
+    document = Document()
+    document.add(obj)
+    generateInfill(document, settings)
+    assert "fillSpacing" not in obj.overrides
+
+
+def testZeroFillSpacingOverrideDisablesFillForJustThatObject(settings):
+    off = _square("off", overrides={"fillSpacing": 0})
+    on = _square("on")
+    document = Document()
+    document.add(off)
+    document.add(on)
+    generateInfill(document, settings)
+
+    assert not any(p.lineType in DRAWN for p in off.geometry)
+    assert any(p.lineType in DRAWN for p in on.geometry)
+
+
+#endregion
