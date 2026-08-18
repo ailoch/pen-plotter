@@ -4,6 +4,8 @@ The bulk of infill's correctness is measured in test_coverage.py - that's the
 property (nothing left uninked) rather than the mechanism. What lives here is
 behaviour that has a specific, checkable right answer.
 """
+import time
+
 import pytest
 
 pyclipper = pytest.importorskip("pyclipper", reason="infill needs pyclipper")
@@ -136,3 +138,38 @@ def testATaperedResiduePieceIsInkedAlongItsWholeLength(settings):
     assert missedArea < wedgeArea * 0.05, (
         f"{missedArea:.3f} of {wedgeArea:.3f} mm^2 left uninked - the taper went bare"
     )
+
+
+def testALongStraightSliverSkeletonisesQuickly(settings):
+    """Resampling a straight edge lays down a run of exactly-collinear sites, and qhull
+    goes quadratic on those unless they're nudged apart first. Rather than a hardcoded
+    wall-clock budget (flaky across machines), this times a raw Voronoi call on
+    randomly-scattered points of the same count as a baseline for well-behaved input at
+    this scale, then checks the real call against it - proportional, not absolute, so
+    only a return of the collinear-site blowup (two orders of magnitude, not machine
+    noise) trips it."""
+    np = pytest.importorskip("numpy")
+    Voronoi = pytest.importorskip("scipy.spatial").Voronoi
+    long, thin = round(180 * _SCALE), round(0.1 * _SCALE)
+    sliver = [(0, 0), (long, 0), (long, thin), (0, thin)]
+    spacing = 0.15
+
+    # matches _medialAxisLines' own resampling density for this sliver's perimeter
+    maxEdge = max(spacing / _MEDIAL_SAMPLE_DIVISOR * _SCALE, 1.0)
+    sampleCount = round(2 * (long + thin) / maxEdge)
+    baselinePoints = np.random.default_rng(0).uniform(0, max(long, thin), (sampleCount, 2))
+    start = time.perf_counter()
+    Voronoi(baselinePoints)
+    baseline = time.perf_counter() - start
+
+    start = time.perf_counter()
+    lines = _medialAxisLines(sliver, [], spacing, settings.tessellationTolerance)
+    elapsed = time.perf_counter() - start
+
+    assert lines, "a sliver this thin should skeletonise to centreline strokes"
+    budget = max(baseline * 10, 1)
+    assert elapsed < budget, (
+        f"took {elapsed:.2f}s against a {baseline:.2f}s well-behaved baseline of the "
+        f"same point count - the collinear-site blowup is back"
+    )
+

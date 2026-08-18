@@ -17,6 +17,10 @@ _SCALE = 1e5 # pyclipper needs integer coordinates; this gives ~10nm precision a
 # the arc fitter, so it emits many short segments instead of a few long arcs
 _MEDIAL_SAMPLE_DIVISOR = 6
 
+# how far each resampled boundary site is nudged to keep qhull out of its degenerate
+# collinear case, in clipper units (1 = 10nm)
+_MEDIAL_JITTER = 1.0
+
 # how finely JT_ROUND flattens its fillet arcs on the DRAWN loops. pyclipper's default
 # (0.25 scaled units ~ 2.5nm here) is far finer than tolerance needs and floods each
 # loop with points that tessellate() then has to re-fit; tol/4 keeps fillet deviation
@@ -210,8 +214,14 @@ def _medialAxisLines(outer: list, holes: list, spacing: float, tolerance: float)
     if len(samples) < 4:
         return None
 
+    # resampling a straight edge lays down a long run of EXACTLY collinear sites, which
+    # sends qhull's triangulation quadratic - a 180mm sliver's 15k samples take ~10s
+    # against ~0.1s for the same count in general position. Nudging each site by a
+    # clipper unit breaks the collinearity.
     try:
-        vor = Voronoi(np.array(samples, dtype=float))
+        sites = np.array(samples, dtype=float)
+        sites += np.random.default_rng(0).uniform(-_MEDIAL_JITTER, _MEDIAL_JITTER, sites.shape)
+        vor = Voronoi(sites)
     except Exception:
         return None
     verts = vor.vertices
