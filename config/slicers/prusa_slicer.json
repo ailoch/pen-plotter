@@ -1,0 +1,15 @@
+{
+    "visualization": {
+        // leave empty to disable these
+        "styleChangeMessage": ";TYPE:%s", // printed before a line whose feature (draw role) changes; %s will be replaced by the feature name
+        "layerChangeMessage": ";LAYER_CHANGE", // printed between objects when objectHeightChange is true
+
+        // which of these is used depends on machine.style ("role"/"instruction"/"segment")
+        "lineTypes": {"stroke": "External perimeter", "infill": "Solid infill", "gapInfill": "Gap fill", "invalid": "Unknown", "_segmentBounds": "Support material interface", "_pathBounds": "Support material", "_documentBounds": "Support material"},
+        "instructionTypes": ["Internal infill", "Support material interface", "Overhang perimeter", "Gap fill"], // index 0 is G1, 1 is G2, 2 is G3, 3 is everything else
+        "segmentTypes": ["Top solid infill", "External perimeter", "Perimeter", "Support material", "Bridge infill", "Solid infill"],
+
+        "slicerPrefixFile": "gcode_templates/slicers/prusa_slicer_prefix.gcode",
+        "slicerSuffixFile": "gcode_templates/slicers/prusa_slicer_suffix.gcode"
+    }
+}
