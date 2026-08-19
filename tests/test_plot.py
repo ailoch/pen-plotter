@@ -7,8 +7,10 @@ lines emitted, rather than diffing a whole output file - speeds, spacing and
 routing all legitimately change that.
 """
 import cmath
+import glob
 import io
 import math
+import pathlib
 
 import pytest
 
@@ -878,5 +880,22 @@ def testObjectHeightChangeParityStillCountsEmptyObjects(tmp_path, templates):
     createFile(doc, settings, str(out))
     assert f"G1 Z{_DRAW_Z + .001:g}" not in out.read_text()
 
+
+#endregion
+
+
+#region shipped template sanity
+
+def testEveryShippedSlicerTemplateNestsTheMatchingMachinePlaceholder():
+    """createFile renders the machine templates first, then substitutes their text into
+    the slicer templates via {MACHINE_PREFIX}/{MACHINE_SUFFIX} - a slicer prefix missing
+    the former (or a suffix missing the latter) would silently drop the machine's own
+    start/end gcode (homing, the pen-load dwell, park moves) from the output file."""
+    for path in sorted(glob.glob("gcode_templates/slicers/*_prefix.gcode")):
+        text = pathlib.Path(path).read_text()
+        assert "{MACHINE_PREFIX}" in text, f"{path} has no {{MACHINE_PREFIX}} placeholder"
+    for path in sorted(glob.glob("gcode_templates/slicers/*_suffix.gcode")):
+        text = pathlib.Path(path).read_text()
+        assert "{MACHINE_SUFFIX}" in text, f"{path} has no {{MACHINE_SUFFIX}} placeholder"
 
 #endregion
